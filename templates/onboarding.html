@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Studio Setup | MyFit Analytics</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main class="dashboard onboarding-shell">
+<header class="dashboard-header"><div><h1>Studio Setup</h1><p>Complete the initial studio configuration.</p></div><form method="post" action="/logout"><button class="settings-button" type="submit">Logout</button></form></header>
+{% if not is_owner %}
+<section class="panel"><h2>Owner setup required</h2><p class="crm-empty">Studio setup must be completed by an Owner.</p></section>
+{% else %}
+<section class="panel"><form id="onboarding-form" class="onboarding-form">
+<h2>1. Studio Details</h2><label>Studio Name<input id="ob-name" required maxlength="150" value="{{ studio.name }}"></label><label>Timezone<input id="ob-timezone" required value="{{ studio.timezone }}"></label><label>Currency<input id="ob-currency" required maxlength="3" value="{{ studio.currency }}"></label>
+<h2>2. Retention Settings</h2><div class="onboarding-grid"><label>Healthy threshold<input id="ob-healthy" type="number" required value="{{ studio.retention_healthy_days }}"></label><label>Watch threshold<input id="ob-watch" type="number" required value="{{ studio.retention_watch_days }}"></label><label>At Risk threshold<input id="ob-risk" type="number" required value="{{ studio.retention_at_risk_days }}"></label><label>Default Follow-Up<input id="ob-followup" type="number" required value="{{ studio.default_follow_up_days }}"></label></div>
+<h2>3. Data Setup</h2><label><input type="radio" name="destination" value="imports" checked> Import CSV Data</label><label><input type="radio" name="destination" value="dashboard"> Start Without Importing</label>
+<p id="onboarding-status" class="settings-status" aria-live="polite"></p><button class="modal-button modal-button-primary" type="submit">Complete Studio Setup</button>
+</form></section>
+{% endif %}</main>
+{% if is_owner %}<script src="/static/onboarding.js"></script>{% endif %}</body></html>

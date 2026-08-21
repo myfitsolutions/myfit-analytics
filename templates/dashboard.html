@@ -1,0 +1,2339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>MyFit Analytics</title>
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+</head>
+
+<body>
+
+    <div class="dashboard">
+
+        <header class="dashboard-header">
+            <div>
+                <h1>MyFit Analytics</h1>
+                <p id="dashboard-studio-name">Studio performance overview</p>
+            </div>
+            <div class="dashboard-user-area">
+                <span>{{ user_email }} · {{ user_role | title }}</span>
+                <a class="settings-button" href="/members">Members</a>
+                {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Imports</a>{% endif %}
+                {% if user_role == "owner" %}
+                <button id="open-team" class="settings-button" type="button">
+                    Team
+                </button>
+                {% endif %}
+                {% if user_role != "staff" %}
+                <button id="open-settings" class="settings-button" type="button">
+                    Settings
+                </button>
+                {% endif %}
+                <form method="post" action="/logout">
+                    <button class="settings-button" type="submit">Logout</button>
+                </form>
+            </div>
+        </header>
+
+        {% if not has_data %}
+        <section class="panel dashboard-empty-guidance">
+            <h2>No studio data yet</h2>
+            <p>Import member, booking, and payment data to start seeing retention and revenue insights.</p>
+            {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Import Data</a>{% else %}<p>Ask an Owner or Manager to import studio data.</p>{% endif %}
+        </section>
+        {% endif %}
+
+
+        <!-- TOP CARDS -->
+
+        <section class="cards">
+
+            <div class="card">
+                <p class="card-label">Revenue This Month</p>
+                <h2 id="total-revenue">0</h2>
+                <p id="revenue-change" class="card-change"></p>
+            </div>
+
+            <div class="card">
+                <p class="card-label">Active Members</p>
+                <h2 id="active-members">0</h2>
+            </div>
+
+            <div class="card">
+                <p class="card-label">Total Bookings</p>
+                <h2 id="total-bookings">0</h2>
+            </div>
+
+            <div class="card">
+                <p class="card-label">Attendance Rate</p>
+                <h2 id="attendance-rate">0%</h2>
+            </div>
+
+        </section>
+
+
+        <!-- DETAILS -->
+
+        <section class="details">
+
+            <!-- MEMBERS -->
+
+            <div class="panel">
+                <h3>Members</h3>
+
+                <div class="metric-row">
+                    <span>Total Members</span>
+                    <strong id="total-members">0</strong>
+                </div>
+
+                <div class="metric-row">
+                    <span>Active Members</span>
+                    <strong id="members-active">0</strong>
+                </div>
+
+                <div class="metric-row">
+                    <span>Inactive Members</span>
+                    <strong id="inactive-members">0</strong>
+                </div>
+            </div>
+
+
+            <!-- PAYMENTS -->
+
+            <div class="panel">
+                <h3>Payments</h3>
+
+                <div class="metric-row">
+                    <span>Successful Payments</span>
+                    <strong id="successful-payments">0</strong>
+                </div>
+
+                <div class="metric-row">
+                    <span>Failed Payments</span>
+                    <strong id="failed-payments">0</strong>
+                </div>
+
+                <div class="metric-row">
+                    <span>Revenue / Active Member</span>
+                    <strong id="revenue-per-member">0</strong>
+                </div>
+            </div>
+
+
+            <!-- BOOKINGS -->
+
+            <div class="panel">
+                <h3>Bookings</h3>
+
+                <div class="metric-row">
+                    <span>Attended</span>
+                    <strong id="attended-bookings">0</strong>
+                </div>
+
+                <div class="metric-row">
+                    <span>Cancelled</span>
+                    <strong id="cancelled-bookings">0</strong>
+                </div>
+
+                <div class="metric-row">
+                    <span>No Shows</span>
+                    <strong id="no-show-bookings">0</strong>
+                </div>
+            </div>
+
+
+            <!-- MEMBERS AT RISK -->
+
+            <div class="panel retention-panel">
+
+    <h3>Retention Health</h3>
+
+    <div class="retention-grid">
+
+        <div class="retention-stat">
+            <span>Healthy</span>
+            <strong id="retention-healthy">0</strong>
+        </div>
+
+        <div class="retention-stat">
+            <span>Watch</span>
+            <strong id="retention-watch">0</strong>
+        </div>
+
+        <div class="retention-stat">
+            <span>At Risk</span>
+            <strong id="retention-risk">0</strong>
+        </div>
+
+        <div class="retention-stat">
+            <span>Critical</span>
+            <strong id="retention-critical">0</strong>
+        </div>
+
+    </div>
+
+    <h4 class="attention-title">
+        Needs Attention
+    </h4>
+
+    <div id="retention-member-list"></div>
+
+</div>
+
+</section>
+
+        <!-- ACTION CENTER -->
+
+        <section class="action-center-section">
+            <div class="panel action-center-panel">
+                <div class="action-center-header">
+                    <div>
+                        <h3>Action Center</h3>
+                        <p id="action-center-count" aria-live="polite">
+                            Loading members who need attention...
+                        </p>
+                    </div>
+                </div>
+
+                <div
+                    id="action-center-list"
+                    class="action-center-list"
+                    aria-live="polite"
+                >
+                    <p class="action-center-state">Loading action items...</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- FOLLOW-UPS -->
+
+        <section class="follow-ups-section">
+            <div class="panel follow-ups-panel">
+                <div class="follow-ups-header">
+                    <div>
+                        <h3>Follow-Ups</h3>
+                        <p>Scheduled member follow-ups</p>
+                    </div>
+                </div>
+
+                <div class="follow-up-group">
+                    <h4>Due Now</h4>
+                    <div id="follow-ups-due" aria-live="polite">
+                        <p class="follow-up-state">Loading due follow-ups...</p>
+                    </div>
+                </div>
+
+                <div class="follow-up-group">
+                    <h4>Upcoming</h4>
+                    <div id="follow-ups-upcoming" aria-live="polite">
+                        <p class="follow-up-state">Loading upcoming follow-ups...</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ACTION HISTORY -->
+
+        <section class="action-history-section">
+            <div class="panel action-history-panel">
+                <div class="action-history-header">
+                    <div>
+                        <h3>Action History</h3>
+                        <p>Recent Action Center activity</p>
+                    </div>
+                </div>
+
+                <div
+                    id="action-history-list"
+                    class="action-history-list"
+                    aria-live="polite"
+                >
+                    <p class="action-history-state">Loading recent activity...</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAYMENT RECOVERY -->
+
+        <section class="payment-recovery-section">
+            <div class="panel payment-recovery-panel">
+                <div class="payment-recovery-header">
+                    <div>
+                        <h3>Payment Recovery</h3>
+                        <p>Failed payments that need follow-up</p>
+                    </div>
+                    <div class="recovery-summary">
+                        <div class="recovery-stat">
+                            <span>Failed Payments</span>
+                            <strong id="recovery-failed-count">0</strong>
+                        </div>
+                        <div class="recovery-stat">
+                            <span>Revenue to Recover</span>
+                            <strong id="recovery-total">0</strong>
+                        </div>
+                    </div>
+                </div>
+                <div class="payment-table-wrapper">
+                    <table class="payment-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">Member</th>
+                                <th scope="col">Email</th>
+                                <th scope="col">Failed Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody id="payment-recovery-list">
+                            <tr>
+                                <td colspan="3" class="empty-state">Loading failed payments...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+        <!-- REVENUE CHART -->
+
+        <section class="chart-section">
+
+            <div class="panel chart-panel">
+
+                <div class="chart-header">
+                    <h3>Revenue Trend</h3>
+                    <p>Last 6 months</p>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="revenue-chart"></canvas>
+                </div>
+
+            </div>
+
+        </section>
+
+    </div>
+
+    {% if user_role == "owner" %}
+    <!-- TEAM MODAL -->
+
+    <div id="team-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="team-modal-title" hidden>
+        <div class="message-modal team-modal">
+            <div class="message-modal-header">
+                <div>
+                    <h2 id="team-modal-title">Team Members</h2>
+                    <p>Manage staff access for this studio.</p>
+                </div>
+                <button id="team-modal-x" class="modal-close-icon" type="button" aria-label="Close team modal">&times;</button>
+            </div>
+
+            <form id="add-team-form" class="team-add-form">
+                <h3>Add Team Member</h3>
+                <label>Email<input id="team-email" type="email" maxlength="320" required></label>
+                <label>Temporary Password<input id="team-password" type="password" minlength="10" maxlength="128" required></label>
+                <label>Role<select id="team-role"><option value="manager">Manager</option><option value="staff" selected>Staff</option></select></label>
+                <button id="add-team-member" class="modal-button modal-button-primary" type="submit">Add Team Member</button>
+            </form>
+            <p id="team-status" class="settings-status" aria-live="polite"></p>
+            <div id="team-list" class="team-list" aria-live="polite"><p>Loading team...</p></div>
+            <div class="message-modal-footer">
+                <div></div>
+                <button id="close-team" class="modal-button" type="button">Close</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- STUDIO SETTINGS MODAL -->
+
+    <div
+        id="settings-modal"
+        class="modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-modal-title"
+        hidden
+    >
+        <form id="settings-form" class="message-modal settings-modal">
+            <div class="message-modal-header">
+                <div>
+                    <h2 id="settings-modal-title">Studio Settings</h2>
+                    <p>Configure dashboard behavior for this studio.</p>
+                </div>
+                <button
+                    id="settings-modal-x"
+                    class="modal-close-icon"
+                    type="button"
+                    aria-label="Close settings"
+                >&times;</button>
+            </div>
+
+            <div class="settings-grid">
+                <label>Studio Name<input id="setting-name" required maxlength="150"></label>
+                <label>Timezone<input id="setting-timezone" required maxlength="100"></label>
+                <label>Currency<input id="setting-currency" required maxlength="3" pattern="[A-Z]{3}"></label>
+                <label>Sender Display Name<input id="setting-sender-name" maxlength="100"></label>
+            </div>
+
+            <fieldset class="settings-fieldset">
+                <legend>Retention Thresholds</legend>
+                <div class="settings-grid settings-thresholds">
+                    <label>Healthy through<input id="setting-healthy" type="number" min="0" max="3650" required><span>days</span></label>
+                    <label>Watch through<input id="setting-watch" type="number" min="1" max="3650" required><span>days</span></label>
+                    <label>At Risk through<input id="setting-at-risk" type="number" min="2" max="3650" required><span>days</span></label>
+                </div>
+                <p id="critical-threshold-note" class="settings-help"></p>
+            </fieldset>
+
+            <label class="settings-follow-up-label">
+                Default Follow-Up
+                <input id="setting-follow-up" type="number" min="1" max="365" required>
+                <span>days</span>
+            </label>
+
+            <div class="message-modal-footer">
+                <p id="settings-status" class="settings-status" aria-live="polite"></p>
+                <div class="message-modal-actions">
+                    <button id="save-settings" class="modal-button modal-button-primary" type="submit">Save Settings</button>
+                    <button id="close-settings" class="modal-button" type="button">Close</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- ACTION CENTER MESSAGE MODAL -->
+
+    <div
+        id="message-modal"
+        class="modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="message-modal-title"
+        hidden
+    >
+        <div class="message-modal">
+            <div class="message-modal-header">
+                <div>
+                    <h2 id="message-modal-title">Suggested Message</h2>
+                    <p id="message-modal-member"></p>
+                    <p id="message-modal-recipient"></p>
+                </div>
+
+                <button
+                    id="message-modal-x"
+                    class="modal-close-icon"
+                    type="button"
+                    aria-label="Close message modal"
+                >&times;</button>
+            </div>
+
+            <label class="message-label" for="message-subject">
+                Subject
+            </label>
+            <input
+                id="message-subject"
+                class="message-subject"
+                type="text"
+                maxlength="200"
+            >
+
+            <label class="message-label" for="suggested-message">
+                Message
+            </label>
+            <textarea
+                id="suggested-message"
+                class="message-textarea"
+                rows="9"
+            ></textarea>
+            <p
+                id="message-generation-notice"
+                class="message-generation-notice"
+                aria-live="polite"
+            ></p>
+
+            <div class="message-modal-footer">
+                <div class="message-status-area" aria-live="polite">
+                    <p id="copy-confirmation" class="copy-confirmation"></p>
+                    <p id="email-send-status" class="email-send-status"></p>
+                </div>
+                <div class="message-modal-actions">
+                    <button id="copy-message" class="modal-button modal-button-primary" type="button">
+                        Copy Message
+                    </button>
+                    <button id="send-email" class="modal-button modal-button-send" type="button">
+                        Send Email
+                    </button>
+                    <button id="close-message-modal" class="modal-button" type="button">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- CHART.JS -->
+
+    <script
+        src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+    ></script>
+
+
+    <script>
+
+        const STUDIO_ID = {{ studio_id | tojson }};
+        const CURRENT_USER_ROLE = {{ user_role | tojson }};
+        let studioSettings = {
+            currency: "PHP",
+            default_follow_up_days: 3
+        };
+        let revenueChart = null;
+
+        function studioUrl(path) {
+            return `/studios/${STUDIO_ID}${path}`;
+        }
+
+        function formatCurrency(value) {
+            return new Intl.NumberFormat(
+                undefined,
+                {
+                    style: "currency",
+                    currency: studioSettings.currency,
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2
+                }
+            ).format(Number(value) || 0);
+        }
+
+        const settingsModal = document.getElementById("settings-modal");
+        const settingsForm = document.getElementById("settings-form");
+        const settingsStatus = document.getElementById("settings-status");
+        const saveSettingsButton = document.getElementById("save-settings");
+        const settingsFields = {
+            name: document.getElementById("setting-name"),
+            timezone: document.getElementById("setting-timezone"),
+            currency: document.getElementById("setting-currency"),
+            retention_healthy_days: document.getElementById("setting-healthy"),
+            retention_watch_days: document.getElementById("setting-watch"),
+            retention_at_risk_days: document.getElementById("setting-at-risk"),
+            default_follow_up_days: document.getElementById("setting-follow-up"),
+            sender_name: document.getElementById("setting-sender-name")
+        };
+
+        function populateSettingsForm(settings) {
+            Object.entries(settingsFields).forEach(([key, field]) => {
+                field.value = settings[key] ?? "";
+            });
+            document.getElementById("critical-threshold-note").textContent =
+                `Anything above ${settings.retention_at_risk_days} days is Critical.`;
+        }
+
+        async function loadStudioSettings() {
+            const response = await fetch(studioUrl("/settings"));
+
+            if (!response.ok) {
+                throw new Error(`Settings request failed with ${response.status}`);
+            }
+
+            studioSettings = await response.json();
+            document.getElementById("dashboard-studio-name").textContent =
+                studioSettings.name;
+            populateSettingsForm(studioSettings);
+            return studioSettings;
+        }
+
+        async function openSettingsModal() {
+            settingsModal.hidden = false;
+            document.body.classList.add("modal-open");
+            settingsStatus.textContent = "Loading settings...";
+            saveSettingsButton.disabled = true;
+
+            try {
+                await loadStudioSettings();
+                const canEditSettings = CURRENT_USER_ROLE === "owner";
+                Object.values(settingsFields).forEach(field => {
+                    field.disabled = !canEditSettings;
+                });
+                saveSettingsButton.hidden = !canEditSettings;
+                saveSettingsButton.disabled = !canEditSettings;
+                settingsStatus.textContent = canEditSettings
+                    ? ""
+                    : "Only the studio owner can change these settings.";
+                settingsFields.name.focus();
+            } catch (error) {
+                console.error("Settings loading error:", error);
+                settingsStatus.textContent =
+                    "Unable to load settings. Close and try again.";
+                settingsStatus.className =
+                    "settings-status settings-status-error";
+            }
+        }
+
+        function closeSettingsModal() {
+            if (saveSettingsButton.disabled && settingsStatus.textContent === "Saving...") {
+                return;
+            }
+
+            settingsModal.hidden = true;
+            document.body.classList.remove("modal-open");
+        }
+
+        settingsForm.addEventListener("submit", async event => {
+            event.preventDefault();
+            const previousSettings = studioSettings;
+            const payload = {
+                name: settingsFields.name.value.trim(),
+                timezone: settingsFields.timezone.value.trim(),
+                currency: settingsFields.currency.value.trim(),
+                retention_healthy_days: Number(settingsFields.retention_healthy_days.value),
+                retention_watch_days: Number(settingsFields.retention_watch_days.value),
+                retention_at_risk_days: Number(settingsFields.retention_at_risk_days.value),
+                default_follow_up_days: Number(settingsFields.default_follow_up_days.value),
+                sender_name: settingsFields.sender_name.value.trim()
+            };
+
+            saveSettingsButton.disabled = true;
+            saveSettingsButton.textContent = "Saving...";
+            settingsStatus.textContent = "Saving...";
+            settingsStatus.className = "settings-status";
+
+            try {
+                const response = await fetch(studioUrl("/settings"), {
+                    method: "PUT",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Settings update failed with ${response.status}`);
+                }
+
+                studioSettings = await response.json();
+                populateSettingsForm(studioSettings);
+                document.getElementById("dashboard-studio-name").textContent =
+                    studioSettings.name;
+                settingsStatus.textContent = "Settings saved successfully.";
+                settingsStatus.className =
+                    "settings-status settings-status-success";
+                await Promise.all([
+                    loadAnalytics(),
+                    loadMonthlyAnalytics(),
+                    loadRevenueChart(),
+                    loadRetentionHealth(),
+                    loadPaymentRecovery(),
+                    loadActionCenter()
+                ]);
+            } catch (error) {
+                console.error("Settings saving error:", error);
+                studioSettings = previousSettings;
+                settingsStatus.textContent =
+                    "Unable to save settings. Check the values and try again.";
+                settingsStatus.className =
+                    "settings-status settings-status-error";
+            } finally {
+                saveSettingsButton.disabled = false;
+                saveSettingsButton.textContent = "Save Settings";
+            }
+        });
+
+        const openSettingsButton = document.getElementById("open-settings");
+
+        if (openSettingsButton) {
+            openSettingsButton.addEventListener(
+                "click",
+                openSettingsModal
+            );
+        }
+        document.getElementById("close-settings").addEventListener(
+            "click",
+            closeSettingsModal
+        );
+        document.getElementById("settings-modal-x").addEventListener(
+            "click",
+            closeSettingsModal
+        );
+        settingsModal.addEventListener("click", event => {
+            if (event.target === settingsModal) {
+                closeSettingsModal();
+            }
+        });
+
+        const teamModal = document.getElementById("team-modal");
+
+        if (teamModal) {
+            const teamList = document.getElementById("team-list");
+            const teamStatus = document.getElementById("team-status");
+            const addTeamForm = document.getElementById("add-team-form");
+
+            function closeTeamModal() {
+                teamModal.hidden = true;
+                document.body.classList.remove("modal-open");
+            }
+
+            async function updateTeamMember(user, role, isActive, item) {
+                const controls = item.querySelectorAll("button, select");
+                controls.forEach(control => { control.disabled = true; });
+                teamStatus.textContent = "Updating team member...";
+                teamStatus.className = "settings-status";
+
+                try {
+                    const response = await fetch(
+                        studioUrl(`/team/${user.id}`),
+                        {
+                            method: "PUT",
+                            headers: {"Content-Type": "application/json"},
+                            body: JSON.stringify({role: role, is_active: isActive})
+                        }
+                    );
+
+                    if (!response.ok) {
+                        const data = await response.json();
+                        throw new Error(data.detail || "Team update failed");
+                    }
+
+                    teamStatus.textContent = "Team member updated.";
+                    teamStatus.className =
+                        "settings-status settings-status-success";
+                    await loadTeam();
+                } catch (error) {
+                    console.error("Team update error:", error);
+                    teamStatus.textContent =
+                        error.message === "Studio must have at least one active owner"
+                            ? error.message
+                            : "Unable to update team member.";
+                    teamStatus.className =
+                        "settings-status settings-status-error";
+                    controls.forEach(control => { control.disabled = false; });
+                }
+            }
+
+            function renderTeamMember(user) {
+                const item = document.createElement("article");
+                item.className = "team-member";
+                const identity = document.createElement("div");
+                const email = document.createElement("strong");
+                email.textContent = user.email;
+                const state = document.createElement("span");
+                state.textContent = user.is_active ? "Active" : "Inactive";
+                identity.append(email, state);
+
+                const controls = document.createElement("div");
+                controls.className = "team-member-controls";
+                const role = document.createElement("select");
+                role.setAttribute("aria-label", `Role for ${user.email}`);
+                ["owner", "manager", "staff"].forEach(value => {
+                    const option = document.createElement("option");
+                    option.value = value;
+                    option.textContent = value[0].toUpperCase() + value.slice(1);
+                    option.selected = user.role === value;
+                    role.appendChild(option);
+                });
+                const active = document.createElement("select");
+                active.setAttribute("aria-label", `Status for ${user.email}`);
+                [["true", "Active"], ["false", "Inactive"]].forEach(
+                    ([value, label]) => {
+                        const option = document.createElement("option");
+                        option.value = value;
+                        option.textContent = label;
+                        option.selected = user.is_active === (value === "true");
+                        active.appendChild(option);
+                    }
+                );
+                const save = document.createElement("button");
+                save.type = "button";
+                save.className = "action-status-button";
+                save.textContent = "Save";
+                save.addEventListener("click", () => {
+                    updateTeamMember(
+                        user,
+                        role.value,
+                        active.value === "true",
+                        item
+                    );
+                });
+                controls.append(role, active, save);
+                item.append(identity, controls);
+                return item;
+            }
+
+            async function loadTeam() {
+                teamList.replaceChildren();
+                const loading = document.createElement("p");
+                loading.textContent = "Loading team...";
+                teamList.appendChild(loading);
+
+                try {
+                    const response = await fetch(studioUrl("/team"));
+                    if (!response.ok) {
+                        throw new Error(`Team request failed with ${response.status}`);
+                    }
+                    const data = await response.json();
+                    teamList.replaceChildren();
+                    data.team.forEach(user => {
+                        teamList.appendChild(renderTeamMember(user));
+                    });
+                } catch (error) {
+                    console.error("Team loading error:", error);
+                    teamList.replaceChildren();
+                    const message = document.createElement("p");
+                    message.className = "error-state";
+                    message.textContent = "Unable to load team members.";
+                    teamList.appendChild(message);
+                }
+            }
+
+            addTeamForm.addEventListener("submit", async event => {
+                event.preventDefault();
+                const button = document.getElementById("add-team-member");
+                button.disabled = true;
+                button.textContent = "Adding...";
+                teamStatus.textContent = "Adding team member...";
+                teamStatus.className = "settings-status";
+
+                try {
+                    const response = await fetch(studioUrl("/team"), {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({
+                            email: document.getElementById("team-email").value,
+                            password: document.getElementById("team-password").value,
+                            role: document.getElementById("team-role").value
+                        })
+                    });
+                    if (!response.ok) {
+                        const data = await response.json();
+                        throw new Error(data.detail || "Team creation failed");
+                    }
+                    addTeamForm.reset();
+                    document.getElementById("team-role").value = "staff";
+                    teamStatus.textContent = "Team member added successfully.";
+                    teamStatus.className =
+                        "settings-status settings-status-success";
+                    await loadTeam();
+                } catch (error) {
+                    console.error("Team creation error:", error);
+                    teamStatus.textContent =
+                        error.message === "Email already registered"
+                            ? error.message
+                            : "Unable to add team member.";
+                    teamStatus.className =
+                        "settings-status settings-status-error";
+                } finally {
+                    document.getElementById("team-password").value = "";
+                    button.disabled = false;
+                    button.textContent = "Add Team Member";
+                }
+            });
+
+            document.getElementById("open-team").addEventListener(
+                "click",
+                () => {
+                    teamModal.hidden = false;
+                    document.body.classList.add("modal-open");
+                    teamStatus.textContent = "";
+                    loadTeam();
+                }
+            );
+            document.getElementById("close-team").addEventListener(
+                "click",
+                closeTeamModal
+            );
+            document.getElementById("team-modal-x").addEventListener(
+                "click",
+                closeTeamModal
+            );
+            teamModal.addEventListener("click", event => {
+                if (event.target === teamModal) closeTeamModal();
+            });
+        }
+
+        // ---------------------------------
+        // MONTHLY ANALYTICS
+        // ---------------------------------
+
+        async function loadMonthlyAnalytics() {
+
+            const response = await fetch(
+                studioUrl("/analytics/monthly")
+            );
+
+            const data = await response.json();
+
+
+            document.getElementById(
+                "total-revenue"
+            ).textContent =
+                formatCurrency(data.current_month.revenue);
+
+
+            document.getElementById(
+                "total-bookings"
+            ).textContent =
+                data.current_month.total_bookings;
+
+
+            document.getElementById(
+                "attendance-rate"
+            ).textContent =
+                data.current_month.attendance_rate + "%";
+
+
+            const changeElement =
+                document.getElementById(
+                    "revenue-change"
+                );
+
+
+            if (
+                data.revenue_change_percent === null
+            ) {
+
+                changeElement.textContent =
+                    "No previous month data";
+
+            } else if (
+                data.revenue_change_percent >= 0
+            ) {
+
+                changeElement.textContent =
+                    "↑ " +
+                    data.revenue_change_percent +
+                    "% vs last month";
+
+            } else {
+
+                changeElement.textContent =
+                    "↓ " +
+                    Math.abs(
+                        data.revenue_change_percent
+                    ) +
+                    "% vs last month";
+            }
+        }
+
+
+        // ---------------------------------
+        // OVERVIEW ANALYTICS
+        // ---------------------------------
+
+        async function loadAnalytics() {
+
+            const response = await fetch(
+                studioUrl("/analytics/overview")
+            );
+
+            const data = await response.json();
+
+
+            document.getElementById(
+                "active-members"
+            ).textContent =
+                data.active_members;
+
+
+            document.getElementById(
+                "total-members"
+            ).textContent =
+                data.total_members;
+
+
+            document.getElementById(
+                "members-active"
+            ).textContent =
+                data.active_members;
+
+
+            document.getElementById(
+                "inactive-members"
+            ).textContent =
+                data.inactive_members;
+
+
+            document.getElementById(
+                "successful-payments"
+            ).textContent =
+                data.successful_payments;
+
+
+            document.getElementById(
+                "failed-payments"
+            ).textContent =
+                data.failed_payments;
+
+
+            document.getElementById(
+                "revenue-per-member"
+            ).textContent =
+                formatCurrency(
+                    data.average_revenue_per_active_member
+                );
+
+
+            document.getElementById(
+                "attended-bookings"
+            ).textContent =
+                data.attended_bookings;
+
+
+            document.getElementById(
+                "cancelled-bookings"
+            ).textContent =
+                data.cancelled_bookings;
+
+
+            document.getElementById(
+                "no-show-bookings"
+            ).textContent =
+                data.no_show_bookings;
+        }
+
+
+        // ---------------------------------
+        // AT-RISK MEMBERS
+        // ---------------------------------
+
+    async function loadRetentionHealth() {
+
+    try {
+
+        const response = await fetch(
+            studioUrl("/analytics/retention-health")
+        );
+
+        const data = await response.json();
+
+        console.log("Retention data:", data);
+
+        document.getElementById(
+            "retention-healthy"
+        ).textContent =
+            data.summary.healthy;
+
+        document.getElementById(
+            "retention-watch"
+        ).textContent =
+            data.summary.watch;
+
+        document.getElementById(
+            "retention-risk"
+        ).textContent =
+            data.summary.at_risk;
+
+        document.getElementById(
+            "retention-critical"
+        ).textContent =
+            data.summary.critical;
+
+
+        const list =
+            document.getElementById(
+                "retention-member-list"
+            );
+
+        list.replaceChildren();
+
+
+        const priorityMembers =
+            data.members.filter(
+                member =>
+                    member.status === "watch" ||
+                    member.status === "at_risk" ||
+                    member.status === "critical"
+            );
+
+
+        priorityMembers.forEach(member => {
+
+            const item =
+                document.createElement("div");
+
+            item.className =
+                "retention-member";
+
+
+            let inactivityText;
+
+            if (member.days_inactive === null) {
+
+                inactivityText =
+                    "No attendance recorded";
+
+            } else {
+
+                inactivityText =
+                    member.days_inactive +
+                    " days inactive";
+            }
+
+
+            const memberInfo = document.createElement("div");
+            const memberLink = document.createElement("a");
+            memberLink.className = "dashboard-member-link";
+            memberLink.href = `/members/${member.id}`;
+            memberLink.textContent = member.name;
+            const inactivity = document.createElement("p");
+            inactivity.textContent = inactivityText;
+            const status = document.createElement("span");
+            status.className = "retention-status";
+            status.textContent = member.status.replace("_", " ");
+            memberInfo.append(memberLink, inactivity);
+            item.append(memberInfo, status);
+
+
+            list.appendChild(item);
+
+        });
+
+    } catch (error) {
+
+        console.error(
+            "Retention health error:",
+            error
+        );
+    }
+}
+
+
+        // ---------------------------------
+        // ACTION CENTER
+        // ---------------------------------
+
+        const messageModal = document.getElementById("message-modal");
+        const messageModalMember = document.getElementById("message-modal-member");
+        const messageModalRecipient = document.getElementById(
+            "message-modal-recipient"
+        );
+        const messageSubject = document.getElementById("message-subject");
+        const suggestedMessage = document.getElementById("suggested-message");
+        const messageGenerationNotice = document.getElementById(
+            "message-generation-notice"
+        );
+        const copyMessageButton = document.getElementById("copy-message");
+        const sendEmailButton = document.getElementById("send-email");
+        const closeMessageButton = document.getElementById(
+            "close-message-modal"
+        );
+        const messageModalX = document.getElementById("message-modal-x");
+        const emailSendStatus = document.getElementById("email-send-status");
+        const copyConfirmation = document.getElementById("copy-confirmation");
+        let modalTrigger = null;
+        let copyConfirmationTimer = null;
+        let messageRequestId = 0;
+        let activeMessageAction = null;
+        let activeMessageType = null;
+        let isSendingEmail = false;
+
+        function getMemberFirstName(memberName) {
+            return memberName.trim().split(/\s+/)[0] || memberName;
+        }
+
+        function generateRetentionMessage(action) {
+            const firstName = getMemberFirstName(action.member_name);
+            let visitMessage;
+
+            if (action.days_inactive === null) {
+                visitMessage =
+                    "We'd love to welcome you to the studio for your next visit.";
+            } else if (action.retention_status === "critical") {
+                visitMessage =
+                    `We noticed it's been ${action.days_inactive} days since your last visit.`;
+            } else if (action.retention_status === "at_risk") {
+                visitMessage =
+                    `It's been ${action.days_inactive} days since your last visit, and we'd love to see you back.`;
+            } else {
+                visitMessage =
+                    `We noticed it's been ${action.days_inactive} days since your last visit.`;
+            }
+
+            return `Hi ${firstName},\n\n${visitMessage}\nWe'd love to see you back at the studio.\n\nLet us know if there's anything we can help with.`;
+        }
+
+        function generatePaymentMessage(action) {
+            const firstName = getMemberFirstName(action.member_name);
+            const failedAmount = formatCurrency(action.failed_amount);
+
+            return `Hi ${firstName},\n\nIt looks like there was an issue processing your recent payment of ${failedAmount}.\n\nPlease update your payment details when convenient.\nLet us know if you need any help.`;
+        }
+
+        async function openMessageModal(action, messageType, trigger) {
+            const fallbackMessage =
+                messageType === "payment"
+                    ? generatePaymentMessage(action)
+                    : generateRetentionMessage(action);
+            const currentRequestId = ++messageRequestId;
+
+            modalTrigger = trigger;
+            activeMessageAction = action;
+            activeMessageType = messageType;
+            messageModalMember.textContent = action.member_name;
+            messageModalRecipient.textContent = `To: ${action.email}`;
+            messageSubject.value =
+                messageType === "payment"
+                    ? "Payment update needed"
+                    : "We'd love to see you back";
+            messageSubject.disabled = false;
+            suggestedMessage.value = "Generating suggested message...";
+            suggestedMessage.disabled = true;
+            copyMessageButton.disabled = true;
+            sendEmailButton.disabled = true;
+            sendEmailButton.hidden = CURRENT_USER_ROLE === "staff";
+            sendEmailButton.textContent = "Send Email";
+            closeMessageButton.disabled = false;
+            messageModalX.disabled = false;
+            isSendingEmail = false;
+            messageGenerationNotice.textContent = "";
+            copyConfirmation.textContent = "";
+            emailSendStatus.textContent = "";
+            emailSendStatus.className = "email-send-status";
+            messageModal.hidden = false;
+            document.body.classList.add("modal-open");
+            suggestedMessage.focus();
+            suggestedMessage.setSelectionRange(0, 0);
+
+            try {
+                const response = await fetch(
+                    studioUrl("/action-message"),
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            member_id: action.member_id,
+                            member_name: action.member_name,
+                            action_type: messageType,
+                            retention_status: action.retention_status,
+                            days_inactive: action.days_inactive,
+                            failed_amount: action.failed_amount,
+                            priority: action.priority
+                        })
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                if (typeof data.message !== "string" || !data.message.trim()) {
+                    throw new Error("AI response did not include a message");
+                }
+
+                if (currentRequestId !== messageRequestId) {
+                    return;
+                }
+
+                suggestedMessage.value = data.message.trim();
+                loadActionHistory();
+            } catch (error) {
+                console.error("AI message generation error:", error);
+
+                if (currentRequestId !== messageRequestId) {
+                    return;
+                }
+
+                suggestedMessage.value = fallbackMessage;
+                messageGenerationNotice.textContent =
+                    "AI suggestion unavailable — using standard message.";
+                logActionHistory(
+                    action,
+                    "fallback_message_generated",
+                    fallbackMessage,
+                    messageType
+                ).catch(error => {
+                    console.error("Fallback history logging error:", error);
+                });
+            } finally {
+                if (currentRequestId === messageRequestId) {
+                    suggestedMessage.disabled = false;
+                    copyMessageButton.disabled = false;
+                    sendEmailButton.disabled = false;
+                    suggestedMessage.focus();
+                    suggestedMessage.setSelectionRange(0, 0);
+                }
+            }
+        }
+
+        function closeMessageModal() {
+            if (messageModal.hidden || isSendingEmail) {
+                return;
+            }
+
+            messageRequestId += 1;
+            messageModal.hidden = true;
+            document.body.classList.remove("modal-open");
+            messageGenerationNotice.textContent = "";
+            copyConfirmation.textContent = "";
+            emailSendStatus.textContent = "";
+
+            if (copyConfirmationTimer) {
+                clearTimeout(copyConfirmationTimer);
+                copyConfirmationTimer = null;
+            }
+
+            if (modalTrigger) {
+                modalTrigger.focus();
+                modalTrigger = null;
+            }
+
+            activeMessageAction = null;
+            activeMessageType = null;
+        }
+
+        async function sendActionEmail() {
+            if (
+                isSendingEmail ||
+                !activeMessageAction ||
+                !activeMessageType
+            ) {
+                return;
+            }
+
+            const subject = messageSubject.value.trim();
+            const message = suggestedMessage.value.trim();
+
+            if (!subject || !message) {
+                emailSendStatus.textContent =
+                    "Subject and message are required.";
+                emailSendStatus.className = "email-send-status email-send-error";
+                return;
+            }
+
+            isSendingEmail = true;
+            sendEmailButton.disabled = true;
+            sendEmailButton.textContent = "Sending...";
+            copyMessageButton.disabled = true;
+            closeMessageButton.disabled = true;
+            messageModalX.disabled = true;
+            messageSubject.disabled = true;
+            suggestedMessage.disabled = true;
+            emailSendStatus.textContent = "Sending...";
+            emailSendStatus.className = "email-send-status";
+            let sentSuccessfully = false;
+
+            try {
+                const response = await fetch(
+                    studioUrl("/send-action-email"),
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            member_id: activeMessageAction.member_id,
+                            action_type: activeMessageType,
+                            priority: activeMessageAction.priority,
+                            subject: subject,
+                            message: message
+                        })
+                    }
+                );
+                const data = await response.json();
+
+                if (!response.ok || data.success !== true) {
+                    throw new Error("Email send request failed");
+                }
+
+                sentSuccessfully = true;
+                emailSendStatus.textContent = "Email sent successfully.";
+                emailSendStatus.className =
+                    "email-send-status email-send-success";
+                sendEmailButton.textContent = "Sent";
+            } catch (error) {
+                console.error("Send email error:", error);
+                emailSendStatus.textContent =
+                    "Email could not be sent. Please try again.";
+                emailSendStatus.className =
+                    "email-send-status email-send-error";
+                sendEmailButton.textContent = "Send Email";
+            } finally {
+                isSendingEmail = false;
+                messageSubject.disabled = false;
+                suggestedMessage.disabled = false;
+                copyMessageButton.disabled = false;
+                closeMessageButton.disabled = false;
+                messageModalX.disabled = false;
+
+                if (!sentSuccessfully) {
+                    sendEmailButton.disabled = false;
+                }
+
+                loadActionHistory();
+                loadActionCenter();
+            }
+        }
+
+        async function logActionHistory(
+            action,
+            eventType,
+            messageText,
+            actionType
+        ) {
+            const response = await fetch(
+                studioUrl("/action-history"),
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        member_id: action.member_id,
+                        action_type: actionType,
+                        event_type: eventType,
+                        priority: action.priority,
+                        message_text: messageText
+                    })
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(
+                    `History request failed with status ${response.status}`
+                );
+            }
+
+            await loadActionHistory();
+        }
+
+        async function copySuggestedMessage() {
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(suggestedMessage.value);
+                } else {
+                    suggestedMessage.focus();
+                    suggestedMessage.select();
+
+                    if (!document.execCommand("copy")) {
+                        throw new Error("Clipboard copy was not available");
+                    }
+                }
+
+                copyConfirmation.textContent = "Copied!";
+
+                if (activeMessageAction && activeMessageType) {
+                    logActionHistory(
+                        activeMessageAction,
+                        "message_copied",
+                        suggestedMessage.value,
+                        activeMessageType
+                    ).catch(error => {
+                        console.error("Copy history logging error:", error);
+                    });
+                }
+
+                if (copyConfirmationTimer) {
+                    clearTimeout(copyConfirmationTimer);
+                }
+
+                copyConfirmationTimer = setTimeout(() => {
+                    copyConfirmation.textContent = "";
+                    copyConfirmationTimer = null;
+                }, 2000);
+            } catch (error) {
+                console.error("Copy message error:", error);
+                copyConfirmation.textContent =
+                    "Copy failed. Select the message and copy it manually.";
+            }
+        }
+
+        messageModalX.addEventListener(
+            "click",
+            closeMessageModal
+        );
+        closeMessageButton.addEventListener(
+            "click",
+            closeMessageModal
+        );
+        copyMessageButton.addEventListener(
+            "click",
+            copySuggestedMessage
+        );
+        sendEmailButton.addEventListener(
+            "click",
+            sendActionEmail
+        );
+        messageModal.addEventListener("click", event => {
+            if (event.target === messageModal) {
+                closeMessageModal();
+            }
+        });
+        document.addEventListener("keydown", event => {
+            if (event.key === "Escape" && !messageModal.hidden) {
+                closeMessageModal();
+            }
+        });
+
+        function getActionHistoryLabel(entry) {
+            if (entry.event_type === "follow_up_scheduled") {
+                return "Follow-up scheduled";
+            }
+
+            if (entry.event_type === "follow_up_completed") {
+                return "Follow-up completed";
+            }
+
+            if (entry.event_type === "follow_up_cancelled") {
+                return "Follow-up cancelled";
+            }
+
+            if (entry.event_type === "action_contacted") {
+                return "Action marked contacted";
+            }
+
+            if (entry.event_type === "action_resolved") {
+                return "Action marked resolved";
+            }
+
+            if (entry.event_type === "action_snoozed") {
+                return "Action snoozed";
+            }
+
+            if (entry.event_type === "action_reopened") {
+                return "Action reopened";
+            }
+
+            if (entry.event_type === "email_sent") {
+                return entry.action_type === "payment"
+                    ? "Payment recovery email sent"
+                    : "Retention email sent";
+            }
+
+            if (entry.event_type === "email_failed") {
+                return entry.action_type === "payment"
+                    ? "Payment recovery email failed"
+                    : "Retention email failed";
+            }
+
+            if (entry.event_type === "ai_message_generated") {
+                return entry.action_type === "payment"
+                    ? "AI payment recovery message generated"
+                    : "AI retention message generated";
+            }
+
+            if (entry.event_type === "fallback_message_generated") {
+                return entry.action_type === "payment"
+                    ? "Standard payment recovery message generated"
+                    : "Standard retention message generated";
+            }
+
+            return entry.action_type === "payment"
+                ? "Payment recovery message copied"
+                : "Retention message copied";
+        }
+
+        async function loadActionHistory() {
+            const list = document.getElementById("action-history-list");
+
+            try {
+                const response = await fetch(
+                    studioUrl("/action-history?limit=25")
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`);
+                }
+
+                const data = await response.json();
+                list.replaceChildren();
+
+                if (data.history.length === 0) {
+                    const emptyState = document.createElement("p");
+                    emptyState.className = "action-history-state";
+                    emptyState.textContent = "No Action Center activity yet.";
+                    list.appendChild(emptyState);
+                    return;
+                }
+
+                data.history.forEach(entry => {
+                    const item = document.createElement("article");
+                    item.className = "action-history-item";
+
+                    const content = document.createElement("div");
+                    const name = document.createElement("a");
+                    name.className = "dashboard-member-link";
+                    name.href = `/members/${entry.member_id}`;
+                    const description = document.createElement("p");
+                    const timestamp = document.createElement("time");
+                    const createdAt = new Date(entry.created_at);
+
+                    name.textContent = entry.member_name;
+                    description.textContent = getActionHistoryLabel(entry);
+                    timestamp.dateTime = entry.created_at;
+                    timestamp.textContent = Number.isNaN(createdAt.getTime())
+                        ? "Date unavailable"
+                        : createdAt.toLocaleString(
+                            undefined,
+                            {
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit"
+                            }
+                        );
+
+                    content.append(name, description);
+                    item.append(content, timestamp);
+                    list.appendChild(item);
+                });
+            } catch (error) {
+                console.error("Action history error:", error);
+                list.replaceChildren();
+
+                const errorState = document.createElement("p");
+                errorState.className = "action-history-state error-state";
+                errorState.textContent = "Unable to load Action History.";
+                list.appendChild(errorState);
+            }
+        }
+
+        async function updateActionStatus(
+            action,
+            status,
+            item,
+            snoozeDays = null
+        ) {
+            const controls = item.querySelectorAll("button, select");
+            const state = item.querySelector(".action-update-state");
+
+            controls.forEach(control => {
+                control.disabled = true;
+            });
+            state.textContent = "Updating...";
+            state.className = "action-update-state";
+
+            const snoozeUntil = snoozeDays
+                ? new Date(
+                    Date.now() + snoozeDays * 24 * 60 * 60 * 1000
+                ).toISOString()
+                : null;
+
+            try {
+                const response = await fetch(
+                    studioUrl("/action-status"),
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            member_id: action.member_id,
+                            action_type: action.action_type,
+                            status: status,
+                            snooze_until: snoozeUntil,
+                            priority: action.priority
+                        })
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error(
+                        `Status request failed with ${response.status}`
+                    );
+                }
+
+                await Promise.all([
+                    loadActionCenter(),
+                    loadActionHistory()
+                ]);
+            } catch (error) {
+                console.error("Action status error:", error);
+                state.textContent = "Unable to update status. Try again.";
+                state.className =
+                    "action-update-state action-update-error";
+                controls.forEach(control => {
+                    control.disabled = false;
+                });
+
+                const snoozeSelect = item.querySelector(
+                    ".action-snooze-select"
+                );
+
+                if (snoozeSelect) {
+                    snoozeSelect.value = "";
+                }
+            }
+        }
+
+        async function scheduleFollowUp(action, days, item, select) {
+            const controls = item.querySelectorAll("button, select");
+            const state = item.querySelector(".action-update-state");
+            const dueAt = new Date(
+                Date.now() + days * 24 * 60 * 60 * 1000
+            );
+
+            controls.forEach(control => {
+                control.disabled = true;
+            });
+            state.textContent = "Scheduling follow-up...";
+            state.className = "action-update-state";
+
+            try {
+                const response = await fetch(
+                    studioUrl("/follow-ups"),
+                    {
+                        method: "POST",
+                        headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({
+                            member_id: action.member_id,
+                            action_type: action.action_type,
+                            due_at: dueAt.toISOString(),
+                            note: null
+                        })
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error(
+                        `Follow-up request failed with ${response.status}`
+                    );
+                }
+
+                const followUp = await response.json();
+                state.textContent =
+                    "Follow-up scheduled for " +
+                    new Date(followUp.due_at).toLocaleDateString(
+                        undefined,
+                        {month: "short", day: "numeric"}
+                    );
+                await Promise.all([loadFollowUps(), loadActionHistory()]);
+            } catch (error) {
+                console.error("Follow-up scheduling error:", error);
+                state.textContent = "Unable to schedule follow-up. Try again.";
+                state.className =
+                    "action-update-state action-update-error";
+            } finally {
+                controls.forEach(control => {
+                    control.disabled = false;
+                });
+                select.value = "";
+            }
+        }
+
+        async function updateFollowUp(followUp, operation, item) {
+            const controls = item.querySelectorAll("button");
+            const state = item.querySelector(".follow-up-update-state");
+
+            controls.forEach(control => {
+                control.disabled = true;
+            });
+            state.textContent =
+                operation === "complete" ? "Completing..." : "Cancelling...";
+
+            try {
+                const response = await fetch(
+                    studioUrl(`/follow-ups/${followUp.id}/${operation}`),
+                    {method: "POST"}
+                );
+
+                if (!response.ok) {
+                    throw new Error(
+                        `Follow-up update failed with ${response.status}`
+                    );
+                }
+
+                await Promise.all([loadFollowUps(), loadActionHistory()]);
+            } catch (error) {
+                console.error("Follow-up update error:", error);
+                state.textContent = "Unable to update follow-up. Try again.";
+                state.className =
+                    "follow-up-update-state follow-up-update-error";
+                controls.forEach(control => {
+                    control.disabled = false;
+                });
+            }
+        }
+
+        function renderFollowUp(followUp, isDue) {
+            const item = document.createElement("article");
+            item.className = `follow-up-item${isDue ? " follow-up-due" : ""}`;
+
+            const content = document.createElement("div");
+            content.className = "follow-up-content";
+            const badges = document.createElement("div");
+            badges.className = "follow-up-badges";
+            const timingBadge = document.createElement("span");
+            timingBadge.className =
+                `follow-up-badge ${isDue ? "follow-up-badge-due" : ""}`;
+            timingBadge.textContent = isDue ? "DUE" : "UPCOMING";
+            const typeBadge = document.createElement("span");
+            typeBadge.className = "follow-up-badge";
+            typeBadge.textContent = followUp.action_type.toUpperCase();
+            badges.append(timingBadge, typeBadge);
+
+            const name = document.createElement("a");
+            name.className = "dashboard-member-link";
+            name.href = `/members/${followUp.member_id}`;
+            name.textContent = followUp.member_name;
+            const due = document.createElement("time");
+            due.dateTime = followUp.due_at;
+            due.textContent =
+                (isDue ? "Due " : "") +
+                new Date(followUp.due_at).toLocaleString(
+                    undefined,
+                    {
+                        month: "short",
+                        day: "numeric",
+                        hour: "numeric",
+                        minute: "2-digit"
+                    }
+                );
+            content.append(badges, name, due);
+
+            if (followUp.note) {
+                const note = document.createElement("p");
+                note.textContent = followUp.note;
+                content.appendChild(note);
+            }
+
+            const controls = document.createElement("div");
+            controls.className = "follow-up-controls";
+
+            if (isDue) {
+                const contact = document.createElement("button");
+                contact.type = "button";
+                contact.className = "action-button";
+                contact.textContent =
+                    followUp.action_type === "payment"
+                        ? "Recover Payment"
+                        : "Contact Member";
+                contact.addEventListener("click", () => {
+                    openMessageModal(
+                        {
+                            member_id: followUp.member_id,
+                            member_name: followUp.member_name,
+                            email: followUp.email,
+                            action_type: followUp.action_type,
+                            retention_status: "watch",
+                            days_inactive: null,
+                            failed_amount: 0,
+                            priority: null
+                        },
+                        followUp.action_type,
+                        contact
+                    );
+                });
+
+                const complete = document.createElement("button");
+                complete.type = "button";
+                complete.className = "action-status-button";
+                complete.textContent = "Complete";
+                complete.addEventListener("click", () => {
+                    updateFollowUp(followUp, "complete", item);
+                });
+                controls.append(contact, complete);
+            } else {
+                const cancel = document.createElement("button");
+                cancel.type = "button";
+                cancel.className = "action-status-button";
+                cancel.textContent = "Cancel";
+                cancel.addEventListener("click", () => {
+                    updateFollowUp(followUp, "cancel", item);
+                });
+                controls.appendChild(cancel);
+            }
+
+            const state = document.createElement("p");
+            state.className = "follow-up-update-state";
+            state.setAttribute("aria-live", "polite");
+            controls.appendChild(state);
+            item.append(content, controls);
+            return item;
+        }
+
+        async function loadFollowUps() {
+            const dueList = document.getElementById("follow-ups-due");
+            const upcomingList = document.getElementById(
+                "follow-ups-upcoming"
+            );
+
+            try {
+                const response = await fetch(
+                    studioUrl("/follow-ups?status=pending")
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Request failed with ${response.status}`);
+                }
+
+                const data = await response.json();
+                const due = data.follow_ups.filter(item => item.is_due);
+                const upcoming = data.follow_ups.filter(item => !item.is_due);
+                dueList.replaceChildren();
+                upcomingList.replaceChildren();
+
+                [
+                    [dueList, due, "No follow-ups are due now."],
+                    [upcomingList, upcoming, "No upcoming follow-ups."]
+                ].forEach(([list, followUps, emptyMessage]) => {
+                    if (followUps.length === 0) {
+                        const empty = document.createElement("p");
+                        empty.className = "follow-up-state";
+                        empty.textContent = emptyMessage;
+                        list.appendChild(empty);
+                        return;
+                    }
+
+                    followUps.forEach(followUp => {
+                        list.appendChild(
+                            renderFollowUp(followUp, followUp.is_due)
+                        );
+                    });
+                });
+            } catch (error) {
+                console.error("Follow-up loading error:", error);
+                dueList.replaceChildren();
+                upcomingList.replaceChildren();
+                const errorState = document.createElement("p");
+                errorState.className = "follow-up-state error-state";
+                errorState.textContent = "Unable to load follow-ups.";
+                dueList.appendChild(errorState);
+            }
+        }
+
+        async function loadActionCenter() {
+            const count = document.getElementById("action-center-count");
+            const list = document.getElementById("action-center-list");
+
+            try {
+                const response = await fetch(
+                    studioUrl("/analytics/action-center")
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`);
+                }
+
+                const data = await response.json();
+                const memberLabel = data.action_count === 1 ? "member" : "members";
+                count.textContent =
+                    `${data.action_count} ${memberLabel} need attention`;
+                list.replaceChildren();
+
+                if (data.actions.length === 0) {
+                    const emptyState = document.createElement("p");
+                    emptyState.className = "action-center-state";
+                    emptyState.textContent = "No members need attention right now.";
+                    list.appendChild(emptyState);
+                    return;
+                }
+
+                data.actions.forEach(action => {
+                    const item = document.createElement("article");
+                    item.className = "action-item";
+
+                    const content = document.createElement("div");
+                    content.className = "action-item-content";
+
+                    const badge = document.createElement("span");
+                    badge.className = `action-priority action-priority-${action.priority}`;
+                    badge.textContent = action.priority;
+
+                    const name = document.createElement("a");
+                    name.className = "action-member-name";
+                    name.href = `/members/${action.member_id}`;
+                    name.textContent = action.member_name;
+
+                    const details = document.createElement("div");
+                    details.className = "action-details";
+
+                    if (action.days_inactive === null && action.retention_status) {
+                        const inactivity = document.createElement("span");
+                        inactivity.textContent = "No attendance recorded";
+                        details.appendChild(inactivity);
+                    } else if (action.days_inactive !== null) {
+                        const inactivity = document.createElement("span");
+                        inactivity.textContent = `${action.days_inactive} days inactive`;
+                        details.appendChild(inactivity);
+                    }
+
+                    if (action.retention_status) {
+                        const retention = document.createElement("span");
+                        retention.textContent =
+                            `${action.retention_status.replace("_", " ")} retention risk`;
+                        details.appendChild(retention);
+                    }
+
+                    if (action.failed_payment_count > 0) {
+                        const payment = document.createElement("span");
+                        payment.textContent =
+                            formatCurrency(action.failed_amount) +
+                            " failed payment";
+                        details.appendChild(payment);
+                    }
+
+                    const statusBadge = document.createElement("span");
+                    statusBadge.className =
+                        `action-current-status action-current-status-${action.action_status}`;
+                    statusBadge.textContent =
+                        `Status: ${action.action_status}`;
+                    details.appendChild(statusBadge);
+
+                    content.append(badge, name, details);
+
+                    const controls = document.createElement("div");
+                    controls.className = "action-controls";
+
+                    const button = document.createElement("button");
+                    button.type = "button";
+                    button.className = "action-button";
+                    const messageType = action.action_type;
+                    button.textContent =
+                        messageType === "payment"
+                            ? "Recover Payment"
+                            : "Contact Member";
+                    button.addEventListener("click", () => {
+                        openMessageModal(action, messageType, button);
+                    });
+
+                    const statusControls = document.createElement("div");
+                    statusControls.className = "action-status-controls";
+
+                    const resolveButton = document.createElement("button");
+                    resolveButton.type = "button";
+                    resolveButton.className = "action-status-button";
+                    resolveButton.textContent = "Mark Resolved";
+                    resolveButton.addEventListener("click", () => {
+                        updateActionStatus(
+                            action,
+                            "resolved",
+                            item
+                        );
+                    });
+
+                    const snoozeSelect = document.createElement("select");
+                    snoozeSelect.className = "action-snooze-select";
+                    snoozeSelect.setAttribute("aria-label", "Snooze action");
+
+                    const snoozeOptions = [
+                        ["", "Snooze"],
+                        ["1", "1 day"],
+                        ["3", "3 days"],
+                        ["7", "7 days"]
+                    ];
+
+                    snoozeOptions.forEach(([value, label]) => {
+                        const option = document.createElement("option");
+                        option.value = value;
+                        option.textContent = label;
+                        snoozeSelect.appendChild(option);
+                    });
+                    snoozeSelect.addEventListener("change", () => {
+                        const days = Number(snoozeSelect.value);
+
+                        if (days) {
+                            updateActionStatus(
+                                action,
+                                "snoozed",
+                                item,
+                                days
+                            );
+                        }
+                    });
+
+                    const followUpSelect = document.createElement("select");
+                    followUpSelect.className = "action-snooze-select";
+                    followUpSelect.setAttribute(
+                        "aria-label",
+                        "Schedule follow-up"
+                    );
+                    [
+                        ["", "Schedule Follow-Up"],
+                        ["1", "In 1 day"],
+                        ["3", "In 3 days"],
+                        ["7", "In 7 days"]
+                    ].forEach(([value, label]) => {
+                        const option = document.createElement("option");
+                        option.value = value;
+                        option.textContent =
+                            Number(value) === studioSettings.default_follow_up_days
+                                ? `${label} (Default)`
+                                : label;
+                        followUpSelect.appendChild(option);
+                    });
+                    followUpSelect.addEventListener("change", () => {
+                        const days = Number(followUpSelect.value);
+
+                        if (days) {
+                            scheduleFollowUp(
+                                action,
+                                days,
+                                item,
+                                followUpSelect
+                            );
+                        }
+                    });
+
+                    if (CURRENT_USER_ROLE !== "staff") {
+                        statusControls.append(resolveButton, snoozeSelect);
+                    }
+                    statusControls.append(followUpSelect);
+
+                    if (
+                        action.action_status === "contacted"
+                        && CURRENT_USER_ROLE !== "staff"
+                    ) {
+                        const reopenButton = document.createElement("button");
+                        reopenButton.type = "button";
+                        reopenButton.className = "action-status-button";
+                        reopenButton.textContent = "Reopen";
+                        reopenButton.addEventListener("click", () => {
+                            updateActionStatus(
+                                action,
+                                "open",
+                                item
+                            );
+                        });
+                        statusControls.appendChild(reopenButton);
+                    }
+
+                    const updateState = document.createElement("p");
+                    updateState.className = "action-update-state";
+                    updateState.setAttribute("aria-live", "polite");
+
+                    controls.append(button, statusControls, updateState);
+                    item.append(content, controls);
+                    list.appendChild(item);
+                });
+            } catch (error) {
+                console.error("Action center error:", error);
+                count.textContent = "Action Center unavailable";
+                list.replaceChildren();
+
+                const errorState = document.createElement("p");
+                errorState.className = "action-center-state error-state";
+                errorState.textContent = "Unable to load action items.";
+                list.appendChild(errorState);
+            }
+        }
+
+
+        // ---------------------------------
+        // PAYMENT RECOVERY
+        // ---------------------------------
+
+        async function loadPaymentRecovery() {
+            const list = document.getElementById("payment-recovery-list");
+
+            try {
+                const response = await fetch(
+                    studioUrl("/analytics/payment-recovery")
+                );
+
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`);
+                }
+
+                const data = await response.json();
+                document.getElementById("recovery-failed-count").textContent =
+                    data.failed_payment_count;
+                document.getElementById("recovery-total").textContent =
+                    formatCurrency(data.revenue_to_recover);
+
+                list.replaceChildren();
+
+                if (data.payments.length === 0) {
+                    const row = list.insertRow();
+                    const cell = row.insertCell();
+                    cell.colSpan = 3;
+                    cell.className = "empty-state";
+                    cell.textContent = "No failed payments to recover.";
+                    return;
+                }
+
+                data.payments.forEach(payment => {
+                    const row = list.insertRow();
+                    const nameCell = row.insertCell();
+                    const emailCell = row.insertCell();
+                    const amountCell = row.insertCell();
+
+                    const memberLink = document.createElement("a");
+                    memberLink.className = "dashboard-member-link";
+                    memberLink.href = `/members/${payment.member_id}`;
+                    memberLink.textContent = payment.member_name;
+                    nameCell.appendChild(memberLink);
+                    emailCell.textContent = payment.email || "No email available";
+                    amountCell.className = "payment-amount";
+                    amountCell.textContent = formatCurrency(payment.amount);
+                });
+            } catch (error) {
+                console.error("Payment recovery error:", error);
+                const row = document.createElement("tr");
+                const cell = document.createElement("td");
+                cell.colSpan = 3;
+                cell.className = "empty-state error-state";
+                cell.textContent = "Unable to load payment recovery.";
+                row.appendChild(cell);
+                list.replaceChildren(row);
+            }
+        }
+
+
+        // ---------------------------------
+        // REVENUE CHART
+        // ---------------------------------
+
+        async function loadRevenueChart() {
+
+            try {
+
+                const response = await fetch(
+                    studioUrl("/analytics/revenue-trend")
+                );
+
+                const data =
+                    await response.json();
+
+
+                const labels =
+                    data.map(
+                        item => item.month
+                    );
+
+
+                const revenue =
+                    data.map(
+                        item => item.revenue
+                    );
+
+
+                const canvas =
+                    document.getElementById(
+                        "revenue-chart"
+                    );
+
+
+                if (!canvas) {
+
+                    console.error(
+                        "Revenue chart canvas not found"
+                    );
+
+                    return;
+                }
+
+
+                if (
+                    typeof Chart === "undefined"
+                ) {
+
+                    console.error(
+                        "Chart.js did not load"
+                    );
+
+                    return;
+                }
+
+
+                if (revenueChart) {
+                    revenueChart.destroy();
+                }
+
+                revenueChart = new Chart(
+                    canvas,
+                    {
+                        type: "line",
+
+                        data: {
+                            labels: labels,
+
+                            datasets: [{
+                                label: "Revenue",
+                                data: revenue,
+                                borderWidth: 2,
+                                tension: 0.3,
+                                fill: false
+                            }]
+                        },
+
+                        options: {
+
+                            responsive: true,
+
+                            maintainAspectRatio:
+                                false,
+
+                            plugins: {
+
+                                legend: {
+                                    display: false
+                                },
+
+                                tooltip: {
+                                    callbacks: {
+                                        label: context =>
+                                            `Revenue: ${formatCurrency(context.parsed.y)}`
+                                    }
+                                }
+
+                            },
+
+                            scales: {
+
+                                y: {
+
+                                    beginAtZero: true,
+
+                                    ticks: {
+
+                                        callback:
+                                            function(value) {
+
+                                                return formatCurrency(value);
+                                            }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                );
+
+            } catch (error) {
+
+                console.error(
+                    "Revenue chart error:",
+                    error
+                );
+            }
+        }
+
+
+        // ---------------------------------
+        // LOAD DASHBOARD
+        // ---------------------------------
+
+        document.addEventListener("keydown", event => {
+            if (event.key === "Escape" && !settingsModal.hidden) {
+                closeSettingsModal();
+            }
+        });
+
+        async function initializeDashboard() {
+            try {
+                await loadStudioSettings();
+            } catch (error) {
+                console.error("Initial settings error:", error);
+            }
+
+            await Promise.all([
+                loadAnalytics(),
+                loadMonthlyAnalytics(),
+                loadRevenueChart(),
+                loadRetentionHealth(),
+                loadPaymentRecovery(),
+                loadActionCenter(),
+                loadFollowUps(),
+                loadActionHistory()
+            ]);
+        }
+
+        initializeDashboard();
+
+    </script>
+
+</body>
+</html>

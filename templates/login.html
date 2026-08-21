@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In | MyFit Analytics</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+    <main class="login-card">
+        <div class="login-header">
+            <h1>MyFit Analytics</h1>
+            <p>Sign in to your studio dashboard</p>
+        </div>
+
+        {% if error %}
+        <p class="login-error" role="alert">{{ error }}</p>
+        {% endif %}
+
+        <form method="post" action="/login" class="login-form">
+            <label for="email">Email</label>
+            <input
+                id="email"
+                name="email"
+                type="email"
+                autocomplete="username"
+                maxlength="320"
+                required
+            >
+
+            <label for="password">Password</label>
+            <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                minlength="10"
+                maxlength="128"
+                required
+            >
+
+            <button type="submit">Sign In</button>
+        </form>
+    </main>
+</body>
+</html>

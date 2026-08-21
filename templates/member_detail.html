@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Member | MyFit Analytics</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-crm-page="detail">
+    <main class="dashboard">
+        <header class="dashboard-header">
+            <div><h1>MyFit Analytics</h1><p>{{ studio_name }}</p></div>
+            <nav class="dashboard-user-area" aria-label="Primary navigation">
+                <a class="settings-button" href="/dashboard">Dashboard</a>
+                <a class="settings-button" href="/members">Members</a>
+                {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Imports</a>{% endif %}
+                <span>{{ user_email }} · {{ user_role | title }}</span>
+                <form method="post" action="/logout"><button class="settings-button" type="submit">Logout</button></form>
+            </nav>
+        </header>
+
+        <a class="crm-back-link" href="/members">&larr; Members</a>
+        <section class="panel crm-profile-header">
+            <div><h2 id="profile-name">Loading member...</h2><p id="profile-email"></p><div id="profile-health" class="crm-health-line"></div></div>
+            <div id="profile-actions" class="crm-profile-actions"></div>
+        </section>
+
+        <section id="profile-summary" class="cards crm-summary-cards" aria-live="polite"></section>
+
+        <div class="crm-detail-grid">
+            <section class="panel"><h3>Retention</h3><div id="retention-detail" class="crm-section-body"></div><div id="action-status-detail" class="crm-status-list"></div></section>
+            <section class="panel"><h3>Payments</h3><div id="payment-summary" class="crm-section-body"></div><h4>Recent Payments</h4><div id="payment-history" class="crm-history-list"></div></section>
+            <section class="panel"><h3>Bookings</h3><div id="booking-history" class="crm-history-list"></div></section>
+            <section class="panel"><h3>Follow-Ups</h3><div id="member-follow-ups" class="crm-history-list"></div></section>
+            <section class="panel crm-activity-panel"><h3>Activity</h3><div id="member-activity" class="crm-history-list"></div></section>
+        </div>
+        <p id="profile-state" class="crm-page-state" aria-live="polite"></p>
+    </main>
+
+    <div id="crm-message-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="crm-message-title" hidden>
+        <div class="message-modal">
+            <div class="message-modal-header"><div><h2 id="crm-message-title">Suggested Message</h2><p id="crm-message-member"></p></div><button id="crm-message-x" class="modal-close-icon" type="button" aria-label="Close">&times;</button></div>
+            <label class="message-label" for="crm-subject">Subject</label><input id="crm-subject" class="message-subject" maxlength="200">
+            <label class="message-label" for="crm-message">Message</label><textarea id="crm-message" class="message-textarea" rows="9"></textarea>
+            <p id="crm-message-notice" class="message-generation-notice" aria-live="polite"></p>
+            <div class="message-modal-footer"><p id="crm-message-status" class="settings-status" aria-live="polite"></p><div class="message-modal-actions"><button id="crm-copy" class="modal-button modal-button-primary" type="button">Copy Message</button><button id="crm-send" class="modal-button modal-button-send" type="button">Send Email</button><button id="crm-close" class="modal-button" type="button">Close</button></div></div>
+        </div>
+    </div>
+    <script>
+        window.MYFIT_CRM = {
+            studioId: {{ studio_id | tojson }},
+            memberId: {{ member_id | tojson }},
+            userRole: {{ user_role | tojson }}
+        };
+    </script>
+    <script src="/static/member_crm.js"></script>
+</body>
+</html>

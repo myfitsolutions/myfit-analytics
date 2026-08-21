@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Members | MyFit Analytics</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-crm-page="members">
+    <main class="dashboard">
+        <header class="dashboard-header">
+            <div><h1>MyFit Analytics</h1><p>{{ studio_name }}</p></div>
+            <nav class="dashboard-user-area" aria-label="Primary navigation">
+                <a class="settings-button" href="/dashboard">Dashboard</a>
+                <a class="settings-button" href="/members" aria-current="page">Members</a>
+                {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Imports</a>{% endif %}
+                <span>{{ user_email }} · {{ user_role | title }}</span>
+                <form method="post" action="/logout"><button class="settings-button" type="submit">Logout</button></form>
+            </nav>
+        </header>
+
+        <section class="panel crm-panel">
+            <div class="crm-title">
+                <div><h2>Members</h2><p id="member-count">Loading members...</p></div>
+                {% if user_role in ["owner", "manager"] %}
+                <div class="crm-import-actions">
+                    <button id="open-member-import" class="settings-button" type="button">Import Members</button>
+                    <button id="open-booking-import" class="settings-button" type="button">Import Bookings</button>
+                    <button id="open-payment-import" class="settings-button" type="button">Import Payments</button>
+                    <a class="settings-button" href="/imports">Import History</a>
+                </div>
+                {% endif %}
+            </div>
+            <label class="crm-search-label" for="member-search">Search members</label>
+            <input id="member-search" class="crm-search" type="search" placeholder="Search by name or email..." autocomplete="off">
+            <div id="member-filters" class="crm-filters" aria-label="Filter members">
+                <button type="button" data-filter="all" class="crm-filter active">All</button>
+                <button type="button" data-filter="healthy" class="crm-filter">Healthy</button>
+                <button type="button" data-filter="watch" class="crm-filter">Watch</button>
+                <button type="button" data-filter="at_risk" class="crm-filter">At Risk</button>
+                <button type="button" data-filter="critical" class="crm-filter">Critical</button>
+                <button type="button" data-filter="payment_issue" class="crm-filter">Payment Issue</button>
+            </div>
+            <div id="members-list" class="crm-members-list" aria-live="polite"><p class="crm-empty">Loading members...</p></div>
+        </section>
+    </main>
+
+    {% if user_role in ["owner", "manager"] %}
+    <div id="member-import-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="member-import-title" hidden>
+        <div class="message-modal member-import-modal">
+            <div class="message-modal-header">
+                <div><h2 id="member-import-title">Import Members</h2><p>Upload a UTF-8 CSV file up to 5 MB and 10,000 rows.</p></div>
+                <button id="member-import-x" class="modal-close-icon" type="button" aria-label="Close import modal">&times;</button>
+            </div>
+            <div class="member-import-help">
+                <strong>Expected columns</strong>
+                <p>first_name, last_name, email, status (optional), last_visit_at (optional)</p>
+                <a class="settings-button" href="/members/import-template.csv">Download Template</a>
+            </div>
+            <form id="member-import-form" class="member-import-form">
+                <label for="member-csv-file">Upload CSV</label>
+                <input id="member-csv-file" name="file" type="file" accept=".csv,text/csv" required>
+                <button id="import-members-button" class="modal-button modal-button-primary" type="submit">Import Members</button>
+            </form>
+            <p id="member-import-status" class="settings-status" aria-live="polite"></p>
+            <div id="member-import-result" class="member-import-result" aria-live="polite"></div>
+            <div class="message-modal-footer"><div></div><button id="close-member-import" class="modal-button" type="button">Close</button></div>
+        </div>
+    </div>
+
+    <div id="booking-import-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="booking-import-title" hidden>
+        <div class="message-modal member-import-modal">
+            <div class="message-modal-header">
+                <div><h2 id="booking-import-title">Import Bookings</h2><p>Upload a UTF-8 CSV file up to 5 MB and 10,000 rows.</p></div>
+                <button id="booking-import-x" class="modal-close-icon" type="button" aria-label="Close booking import modal">&times;</button>
+            </div>
+            <div class="member-import-help">
+                <strong>Expected columns</strong>
+                <p>member_email, class_name, booking_date, status</p>
+                <a class="settings-button" href="/bookings/import-template.csv">Download Booking Template</a>
+            </div>
+            <form id="booking-import-form" class="member-import-form">
+                <label for="booking-csv-file">Upload CSV</label>
+                <input id="booking-csv-file" name="file" type="file" accept=".csv,text/csv" required>
+                <button id="import-bookings-button" class="modal-button modal-button-primary" type="submit">Import Bookings</button>
+            </form>
+            <p id="booking-import-status" class="settings-status" aria-live="polite"></p>
+            <div id="booking-import-result" class="member-import-result" aria-live="polite"></div>
+            <div class="message-modal-footer"><div></div><button id="close-booking-import" class="modal-button" type="button">Close</button></div>
+        </div>
+    </div>
+
+    <div id="payment-import-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="payment-import-title" hidden>
+        <div class="message-modal member-import-modal">
+            <div class="message-modal-header">
+                <div><h2 id="payment-import-title">Import Payments</h2><p>Upload a UTF-8 CSV file up to 5 MB and 10,000 rows.</p></div>
+                <button id="payment-import-x" class="modal-close-icon" type="button" aria-label="Close payment import modal">&times;</button>
+            </div>
+            <div class="member-import-help">
+                <strong>Expected columns</strong>
+                <p>member_email, amount, payment_date, status</p>
+                <a class="settings-button" href="/payments/import-template.csv">Download Payment Template</a>
+            </div>
+            <form id="payment-import-form" class="member-import-form">
+                <label for="payment-csv-file">Upload CSV</label>
+                <input id="payment-csv-file" name="file" type="file" accept=".csv,text/csv" required>
+                <button id="import-payments-button" class="modal-button modal-button-primary" type="submit">Import Payments</button>
+            </form>
+            <p id="payment-import-status" class="settings-status" aria-live="polite"></p>
+            <div id="payment-import-result" class="member-import-result" aria-live="polite"></div>
+            <div class="message-modal-footer"><div></div><button id="close-payment-import" class="modal-button" type="button">Close</button></div>
+        </div>
+    </div>
+    {% endif %}
+    <script>
+        window.MYFIT_CRM = {
+            studioId: {{ studio_id | tojson }},
+            userRole: {{ user_role | tojson }}
+        };
+    </script>
+    <script src="/static/member_crm.js"></script>
+</body>
+</html>
