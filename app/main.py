@@ -464,9 +464,7 @@ def create_studio(
 
 @app.get("/")
 def root():
-    return {
-        "message": "MyFit Analytics API is running"
-    }
+    return RedirectResponse("/dashboard", status_code=303)
 
 @app.get("/health")
 def health_check():
