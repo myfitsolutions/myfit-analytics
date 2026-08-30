@@ -12,6 +12,7 @@
             <div><h1>MyFit Analytics</h1><p>{{ studio_name }}</p></div>
             <nav class="dashboard-user-area" aria-label="Primary navigation">
                 <a class="settings-button" href="/dashboard">Dashboard</a>
+                <a class="settings-button" href="/revenue">Revenue</a>
                 <a class="settings-button" href="/members">Members</a>
                 {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Imports</a>{% endif %}
                 <span>{{ user_email }} · {{ user_role | title }}</span>
@@ -28,11 +29,16 @@
         <section id="profile-summary" class="cards crm-summary-cards" aria-live="polite"></section>
 
         <div class="crm-detail-grid">
+            <section class="panel"><h3>Attendance</h3><div id="attendance-detail" class="crm-section-body"></div></section>
             <section class="panel"><h3>Retention</h3><div id="retention-detail" class="crm-section-body"></div><div id="action-status-detail" class="crm-status-list"></div></section>
             <section class="panel"><h3>Payments</h3><div id="payment-summary" class="crm-section-body"></div><h4>Recent Payments</h4><div id="payment-history" class="crm-history-list"></div></section>
             <section class="panel"><h3>Bookings</h3><div id="booking-history" class="crm-history-list"></div></section>
             <section class="panel"><h3>Follow-Ups</h3><div id="member-follow-ups" class="crm-history-list"></div></section>
-            <section class="panel crm-activity-panel"><h3>Activity</h3><div id="member-activity" class="crm-history-list"></div></section>
+            <section class="panel crm-activity-panel">
+                <div class="crm-activity-header"><h3>Activity</h3><label for="activity-filter" class="sr-only">Filter activity</label><select id="activity-filter"><option value="all">All Activity</option><option value="retention">Retention</option><option value="payment">Payments</option><option value="attendance">Attendance</option><option value="milestone">Milestones</option><option value="follow_up">Follow-Ups</option></select></div>
+                <div class="crm-activity-columns" aria-hidden="true"><span>Date &amp; Time</span><span>Activity</span><span>Type</span></div>
+                <div id="member-activity" class="crm-activity-list" aria-live="polite"></div>
+            </section>
         </div>
         <p id="profile-state" class="crm-page-state" aria-live="polite"></p>
     </main>
@@ -53,6 +59,7 @@
             userRole: {{ user_role | tojson }}
         };
     </script>
+    <script src="/static/activity_history.js"></script>
     <script src="/static/member_crm.js"></script>
 </body>
 </html>

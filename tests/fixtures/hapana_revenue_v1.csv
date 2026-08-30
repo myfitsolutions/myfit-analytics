@@ -1,0 +1,4 @@
+	Full Name,Email,Payment Method,Invoice Date,Revenue Type,Transaction Category,Description,Transaction Id,Processed By,Sale Referred By,Payment Date,Payment Status,Admin Fee,Dishonour Fee,Transaction Fee,Tax,Discount,Gross Revenue,Net Revenue,Unnamed: 19,Unnamed: 20
+Sample Member,sample@example.test,Card,8/10/2024,Membership,Apparel,Sample purchase,TX-SAMPLE-1,Staff,Referral,8/10/2024 14:19,Revenue,$0.00,$0.00,$0.50,$3.72,$0.00,$45.00,$41.28,3.715596,8%
+Refund Member,refund@example.test,Card,30/09/2024,POS,Apparel Apparel,Sample refund,,Staff,,7/10/2024 0:00,Refund,$0.00,$0.00,$0.00,($1.65),$0.00,($20.00),($18.35),-1.651376,8%
+Seconds Member,seconds@example.test,Cash,21/09/2024,Other,,Timestamp sample,,Staff,,21/09/2024 00:00:00,Revenue,$0.00,$0.00,$0.00,$0.00,$1.00,"$1,000.00",$999.00,0,0%

@@ -75,8 +75,8 @@
         table.append(head, body);
         area.appendChild(table);
         document.getElementById("validate-import").hidden = false;
-        document.getElementById("save-preset").hidden = false;
-        document.getElementById("preset-picker").hidden = false;
+        document.getElementById("save-preset").hidden = importType === "revenue";
+        document.getElementById("preset-picker").hidden = importType === "revenue";
         refreshPresetPicker();
     }
     function refreshPresetPicker() {
@@ -196,6 +196,12 @@
             summary.appendChild(item);
         });
         result.appendChild(summary);
+        if (data.profile) {
+            result.appendChild(element("p", "settings-help", `Profile: ${data.profile}`));
+            const financial = document.createElement("div"); financial.className = "member-import-summary";
+            [["Revenue Rows", data.revenue_rows], ["Refund Rows", data.refund_rows], ["Gross Revenue", data.gross_revenue], ["Net Revenue", data.net_revenue], ["Refund Value", data.refund_value]].forEach(([label,value])=>{const item=document.createElement("div");item.append(element("span","",label),element("strong","",String(value)));financial.appendChild(item);});
+            result.appendChild(financial);
+        }
         (data.errors || []).forEach(error => {
             const row = document.createElement("div");
             row.className = "member-import-error";
@@ -305,6 +311,7 @@
                 const counts = element("p", "", `Imported: ${item.imported_count} · Skipped: ${item.skipped_count} · Invalid: ${item.invalid_count}`);
                 const audit = element("p", "", `${item.status.replaceAll("_", " ")} · By: ${item.performed_by}`);
                 if (item.source_name) audit.textContent += ` · Source: ${item.source_name}`;
+                if (item.platform_source) audit.textContent += ` · Platform: ${item.platform_source}`;
                 const view = element("button", "settings-button", "View");
                 view.type = "button";
                 view.addEventListener("click", () => openDetail(item.id));
@@ -332,6 +339,7 @@
             subtitle.textContent = selected.filename;
             content.replaceChildren(
                 detailLine("Type", selected.import_type),
+                detailLine("Platform", selected.platform_source || "Not attributed"),
                 detailLine("Imported by", selected.performed_by),
                 detailLine("Date", formatDate(selected.created_at)),
                 detailLine("Status", selected.status.replaceAll("_", " ")),
@@ -356,7 +364,9 @@
     }
     rollbackButton.addEventListener("click", async () => {
         if (!selected) return;
-        const effects = selected.import_type === "payments"
+        const effects = selected.import_type === "revenue"
+            ? "This removes only Revenue Transactions created by this import and recalculates Revenue analytics."
+            : selected.import_type === "payments"
             ? "This may change revenue, Payment Recovery, Action Center, and payment history."
             : selected.import_type === "bookings"
                 ? "This may change retention and Action Center."

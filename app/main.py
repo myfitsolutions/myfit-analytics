@@ -3,6 +3,7 @@ import io
 import json
 import re
 import uuid
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -27,8 +28,11 @@ from app.models import (
     ImportMappingPreset,
     ImportSourceProfile,
     Member,
+    MemberMilestoneStatus,
     Payment,
+    RevenueTransaction,
     Studio
+    ,StudioDataSource
     ,User
 )
 
@@ -37,10 +41,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, Response
 from fastapi.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from dateutil.relativedelta import relativedelta
 
 from app.services.email_service import EmailServiceError, send_email
+from app.services.attendance import ATTENDANCE_MILESTONES, get_attendance_aggregates, get_attendance_milestone, calculate_attendance_decline, format_ordinal
+from app.services.data_sources import get_dataset_availability, get_primary_data_source, serialize_data_source, set_primary_platform
+from app.platforms import PLATFORMS, get_import_profile
+from app.services.revenue import normalize_revenue_row, parse_revenue_date
 from app.auth import (
     get_current_user,
     normalize_email,
@@ -54,6 +62,7 @@ from app.auth import (
     require_payment_import,
     require_owner,
     require_settings_write,
+    require_data_source_write,
     require_studio_user,
     verify_password
 )
@@ -144,10 +153,13 @@ class BookingCreate(BaseModel):
     status: str = "booked"
 
 
+EngagementActionType = Literal["retention", "payment", "attendance_decline", "attendance_milestone"]
+
+
 class ActionMessageRequest(BaseModel):
     member_id: int = Field(gt=0)
     member_name: str = Field(min_length=1, max_length=100)
-    action_type: Literal["retention", "payment"]
+    action_type: EngagementActionType
     retention_status: Literal[
         "healthy",
         "watch",
@@ -156,7 +168,8 @@ class ActionMessageRequest(BaseModel):
     ] | None = None
     days_inactive: int | None = Field(default=None, ge=0, le=36500)
     failed_amount: float = Field(default=0, ge=0, le=100000000)
-    priority: Literal["urgent", "high", "payment", "watch"] | None = None
+    priority: Literal["urgent", "high", "payment", "watch", "normal"] | None = None
+    milestone_value: int | None = Field(default=None, ge=1, le=1000000)
 
     @model_validator(mode="after")
     def validate_action_context(self):
@@ -170,17 +183,20 @@ class ActionMessageRequest(BaseModel):
                 "retention_status is required for retention messages"
             )
 
+        if self.action_type == "attendance_milestone" and self.milestone_value not in ATTENDANCE_MILESTONES:
+            raise ValueError("milestone_value must be a configured attendance milestone")
+
         return self
 
 
 class ActionHistoryCreate(BaseModel):
     member_id: int = Field(gt=0)
-    action_type: Literal["retention", "payment"]
+    action_type: EngagementActionType
     event_type: Literal[
         "fallback_message_generated",
         "message_copied"
     ]
-    priority: Literal["urgent", "high", "payment", "watch"] | None = None
+    priority: Literal["urgent", "high", "payment", "watch", "normal"] | None = None
     message_text: str = Field(min_length=1, max_length=5000)
 
     @model_validator(mode="after")
@@ -195,8 +211,8 @@ class ActionHistoryCreate(BaseModel):
 
 class ActionEmailRequest(BaseModel):
     member_id: int = Field(gt=0)
-    action_type: Literal["retention", "payment"]
-    priority: Literal["urgent", "high", "payment", "watch"] | None = None
+    action_type: EngagementActionType
+    priority: Literal["urgent", "high", "payment", "watch", "normal"] | None = None
     subject: str = Field(min_length=1, max_length=200)
     message: str = Field(min_length=1, max_length=5000)
 
@@ -219,10 +235,10 @@ class ActionEmailRequest(BaseModel):
 
 class ActionStatusUpdate(BaseModel):
     member_id: int = Field(gt=0)
-    action_type: Literal["retention", "payment"]
+    action_type: Literal["retention", "payment", "attendance_decline"]
     status: Literal["open", "contacted", "resolved", "snoozed"]
     snooze_until: datetime | None = None
-    priority: Literal["urgent", "high", "payment", "watch"] | None = None
+    priority: Literal["urgent", "high", "payment", "watch", "normal"] | None = None
 
     @model_validator(mode="after")
     def validate_snooze(self):
@@ -246,7 +262,7 @@ class ActionStatusUpdate(BaseModel):
 
 class FollowUpCreate(BaseModel):
     member_id: int = Field(gt=0)
-    action_type: Literal["retention", "payment"]
+    action_type: Literal["retention", "payment", "attendance_decline"]
     due_at: datetime
     note: str | None = Field(default=None, max_length=1000)
 
@@ -263,6 +279,10 @@ class FollowUpCreate(BaseModel):
             self.note = self.note.strip() or None
 
         return self
+
+
+class MilestoneStatusUpdate(BaseModel):
+    status: Literal["celebrated", "dismissed"]
 
 
 class ImportRollbackRequest(BaseModel):
@@ -379,6 +399,11 @@ class StudioSettingsUpdate(BaseModel):
 
 class OnboardingComplete(StudioSettingsUpdate):
     destination: Literal["dashboard", "imports"] = "dashboard"
+    platform: Literal["hapana", "bsport", "other"]
+
+
+class PrimaryPlatformUpdate(BaseModel):
+    platform: Literal["hapana", "bsport", "other"]
 
 
 class TeamMemberCreate(BaseModel):
@@ -705,7 +730,20 @@ def onboarding_page(request: Request, db: Session = Depends(get_db)):
     if studio.onboarding_completed_at is not None: return RedirectResponse("/dashboard", status_code=303)
     return templates.TemplateResponse(request=request, name="onboarding.html", context={
         "studio": serialize_studio_settings(studio), "user_role": current_user.role,
-        "user_email": current_user.email, "is_owner": current_user.role == "owner"
+        "user_email": current_user.email, "is_owner": current_user.role == "owner",
+        "platforms": PLATFORMS
+    })
+
+
+@app.get("/revenue")
+def revenue_page(request: Request, db: Session = Depends(get_db)):
+    current_user = get_current_user(request, db)
+    if not current_user: return RedirectResponse("/login", status_code=303)
+    studio = get_studio(db, current_user.studio_id)
+    if studio.onboarding_completed_at is None: return RedirectResponse("/onboarding", status_code=303)
+    return templates.TemplateResponse(request=request, name="revenue.html", context={
+        "studio_id": studio.id, "studio_name": studio.name, "currency": studio.currency,
+        "user_email": current_user.email, "user_role": current_user.role,
     })
 
 
@@ -722,6 +760,7 @@ def complete_onboarding(
     studio.retention_healthy_days = onboarding.retention_healthy_days; studio.retention_watch_days = onboarding.retention_watch_days
     studio.retention_at_risk_days = onboarding.retention_at_risk_days; studio.default_follow_up_days = onboarding.default_follow_up_days
     studio.sender_name = onboarding.sender_name; studio.onboarding_completed_at = datetime.now(timezone.utc)
+    set_primary_platform(db, studio.id, onboarding.platform)
     try: db.commit()
     except SQLAlchemyError:
         db.rollback(); raise HTTPException(status_code=503, detail="Studio onboarding is temporarily unavailable")
@@ -876,6 +915,7 @@ def sanitize_import_filename(filename):
 
 
 def create_import_batch(db, user, import_type, filename, total, imported, skipped):
+    primary_source = get_primary_data_source(db, user.studio_id)
     batch = ImportBatch(
         studio_id=user.studio_id,
         user_id=user.id,
@@ -885,7 +925,8 @@ def create_import_batch(db, user, import_type, filename, total, imported, skippe
         imported_count=imported,
         skipped_count=skipped,
         invalid_count=total - imported - skipped,
-        status="completed"
+        status="completed",
+        studio_data_source_id=primary_source.id if primary_source else None
     )
     db.add(batch)
     db.flush()
@@ -1617,6 +1658,74 @@ async def import_payments_csv(
     }
 
 
+@app.post("/studios/{studio_id}/revenue/import")
+async def import_revenue_csv(
+    studio_id: int, file: UploadFile = File(...),
+    authorized_user: User = Depends(require_import_history),
+    db: Session = Depends(get_db), dry_run: bool = False
+):
+    source = get_primary_data_source(db, studio_id)
+    if source is None or source.platform != "hapana":
+        raise HTTPException(status_code=409, detail="Hapana must be the active primary platform for this profile")
+    filename, headers, rows = await read_mapping_csv(file)
+    required = set(IMPORT_FIELDS["revenue"]["required"])
+    missing = required - set(headers)
+    if missing: raise HTTPException(status_code=400, detail=f"Missing required column: {sorted(missing)[0]}")
+    errors, validated, emails = [], [], set()
+    for row_number, row in enumerate(rows, start=2):
+        try:
+            item = normalize_revenue_row(row)
+            email = normalize_email(item.get("customer_email", ""))
+            item["customer_email"] = email or None
+            item["row"] = row_number
+            if email: emails.add(email)
+            validated.append(item)
+        except ValueError as error:
+            member_import_error(errors, row_number, row.get("customer_email", ""), str(error))
+    members = db.query(Member).filter(
+        Member.studio_id == studio_id,
+        func.lower(func.trim(Member.email)).in_(emails)
+    ).all() if emails else []
+    members_by_email = {normalize_email(member.email): member.id for member in members}
+    existing = {row[0] for row in db.query(RevenueTransaction.identity_key).filter(
+        RevenueTransaction.studio_id == studio_id,
+        RevenueTransaction.studio_data_source_id == source.id,
+        RevenueTransaction.identity_key.in_({item["identity_key"] for item in validated})
+    ).all()} if validated else set()
+    seen, new_rows, duplicates = set(existing), [], 0
+    for item in validated:
+        if item["identity_key"] in seen:
+            duplicates += 1; continue
+        seen.add(item["identity_key"]); new_rows.append(item)
+    batch = create_import_batch(db, authorized_user, "revenue", filename, len(rows), len(new_rows), duplicates)
+    transactions = []
+    allowed = {column.name for column in RevenueTransaction.__table__.columns} - {"id", "studio_id", "member_id", "studio_data_source_id", "import_batch_id", "created_at", "updated_at"}
+    for item in new_rows:
+        values = {key: value for key, value in item.items() if key in allowed}
+        transactions.append(RevenueTransaction(
+            studio_id=studio_id, member_id=members_by_email.get(item.get("customer_email")),
+            studio_data_source_id=source.id, import_batch_id=batch.id, **values
+        ))
+    db.add_all(transactions)
+    try:
+        if dry_run: db.flush(); db.rollback()
+        else: db.commit()
+    except SQLAlchemyError:
+        db.rollback(); raise HTTPException(status_code=503, detail="Revenue import is temporarily unavailable")
+    gross = sum((item["gross_revenue"] for item in new_rows), Decimal("0.00"))
+    net = sum((item["net_revenue"] for item in new_rows), Decimal("0.00"))
+    refund_rows = [item for item in new_rows if item["transaction_kind"] == "refund"]
+    return {
+        "batch_id": batch.id if not dry_run else None, "profile": "hapana/revenue/v1",
+        "total_rows": len(rows), "imported": len(new_rows), "skipped_existing": duplicates,
+        "invalid": len(rows) - len(validated), "errors": errors,
+        "revenue_rows": sum(item["transaction_kind"] == "revenue" for item in new_rows),
+        "refund_rows": len(refund_rows), "gross_revenue": gross, "net_revenue": net,
+        "refund_value": abs(sum((item["net_revenue"] for item in refund_rows), Decimal("0.00"))),
+        "discounts": sum((item.get("discount") or Decimal("0.00") for item in new_rows), Decimal("0.00")),
+    }
+
+
 IMPORT_FIELDS = {
     "members": {
         "required": ["first_name", "last_name", "email"],
@@ -1629,7 +1738,11 @@ IMPORT_FIELDS = {
     "payments": {
         "required": ["member_email", "amount", "payment_date", "status"],
         "optional": []
-    }
+    },
+    "revenue": {
+        "required": ["net_revenue"],
+        "optional": ["customer_name", "customer_email", "payment_method", "revenue_type", "transaction_category", "description", "external_transaction_id", "processed_by", "sale_referred_by", "source_status", "invoice_date", "payment_date", "admin_fee", "dishonour_fee", "transaction_fee", "tax", "discount", "gross_revenue"]
+    },
 }
 
 HEADER_ALIASES = {
@@ -1651,7 +1764,16 @@ HEADER_ALIASES = {
         "amount": ["amount", "payment_amount", "payment amount", "total", "value", "paid_amount"],
         "payment_date": ["payment_date", "payment date", "date", "transaction_date", "transaction date", "created_at"],
         "status": ["status", "payment_status", "payment status", "transaction_status"]
-    }
+    },
+    "revenue": {
+        field: [
+            header for header, destination in {
+                **get_import_profile("hapana", "revenue", "v1")["mapping"],
+                **get_import_profile("hapana", "revenue", "v1").get("aliases", {}),
+            }.items() if destination == field
+        ]
+        for field in set(get_import_profile("hapana", "revenue", "v1")["mapping"].values())
+    },
 }
 
 STATUS_ALIASES = {
@@ -1664,6 +1786,10 @@ STATUS_ALIASES = {
 def normalize_header_name(value):
     normalized = re.sub(r"[\s\-]+", "_", value.strip().casefold())
     return re.sub(r"[^a-z0-9_]", "", normalized)
+
+
+def normalize_csv_header(value):
+    return (value or "").strip().lstrip("\ufeff").strip()
 
 
 def suggested_mapping(import_type, headers):
@@ -1707,7 +1833,7 @@ async def read_mapping_csv(file):
         headers = reader.fieldnames
         if not headers:
             raise HTTPException(status_code=400, detail="CSV contains no header row")
-        headers = [header.strip() for header in headers]
+        headers = [normalize_csv_header(header) for header in headers]
         if len(headers) != len(set(headers)):
             raise HTTPException(status_code=400, detail="Duplicate CSV column")
         reader.fieldnames = headers
@@ -1750,13 +1876,17 @@ def parse_mapping(import_type, mapping_json, headers):
     return selected
 
 
-def normalize_mapped_date(value, studio):
+def normalize_mapped_date(value, studio, day_first=False):
     if not value:
         return value
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
-        return value
+        if not day_first: return value
+        try:
+            parsed = parse_revenue_date(value, ZoneInfo(studio.timezone))
+        except (ValueError, ZoneInfoNotFoundError):
+            return value
     if parsed.tzinfo is None:
         try:
             parsed = parsed.replace(tzinfo=ZoneInfo(studio.timezone))
@@ -1771,14 +1901,17 @@ def transform_mapped_csv(import_type, headers, rows, mapping, studio):
     writer = csv.DictWriter(output, fieldnames=destinations, extrasaction="ignore")
     writer.writeheader()
     transformed = []
-    date_field = {"members": "last_visit_at", "bookings": "booking_date", "payments": "payment_date"}[import_type]
+    date_fields = {
+        "members": ("last_visit_at",), "bookings": ("booking_date",),
+        "payments": ("payment_date",), "revenue": ("invoice_date", "payment_date")
+    }[import_type]
     for row in rows:
         item = {destination: row.get(source, "") for source, destination in mapping.items()}
         if "status" in item:
             key = item["status"].strip().casefold().replace("_", " ")
             item["status"] = STATUS_ALIASES[import_type].get(key, item["status"].strip().casefold())
-        if date_field in item:
-            item[date_field] = normalize_mapped_date(item[date_field], studio)
+        for date_field in date_fields:
+            if date_field in item: item[date_field] = normalize_mapped_date(item[date_field], studio, import_type == "revenue")
         if import_type == "payments" and "amount" in item:
             amount = item["amount"]
             if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", amount):
@@ -1790,7 +1923,7 @@ def transform_mapped_csv(import_type, headers, rows, mapping, studio):
 
 async def run_mapped_import(import_type, filename, content, user, db, dry_run):
     upload = UploadFile(file=io.BytesIO(content), filename=sanitize_import_filename(filename))
-    handler = {"members": import_members_csv, "bookings": import_bookings_csv, "payments": import_payments_csv}[import_type]
+    handler = {"members": import_members_csv, "bookings": import_bookings_csv, "payments": import_payments_csv, "revenue": import_revenue_csv}[import_type]
     return await handler(studio_id=user.studio_id, file=upload, authorized_user=user, db=db, dry_run=dry_run)
 
 
@@ -2007,9 +2140,15 @@ async def preview_mapped_import(
     studio_id: int,
     import_type: str = Form(...),
     file: UploadFile = File(...),
-    authorized_user: User = Depends(require_import_history)
+    authorized_user: User = Depends(require_import_history),
+    db: Session = Depends(get_db)
 ):
     validate_import_type(import_type)
+    profile_name = None
+    if import_type == "revenue":
+        source = get_primary_data_source(db, studio_id)
+        if source is None or source.platform != "hapana": raise HTTPException(status_code=409, detail="Hapana must be the active primary platform for Revenue V1")
+        profile_name = "hapana/revenue/v1"
     filename, headers, rows = await read_mapping_csv(file)
     return {
         "filename": sanitize_import_filename(filename),
@@ -2017,6 +2156,7 @@ async def preview_mapped_import(
         "columns": headers,
         "preview_rows": rows[:10],
         "suggested_mapping": suggested_mapping(import_type, headers),
+        "profile": profile_name,
         **IMPORT_FIELDS[import_type]
     }
 
@@ -2098,7 +2238,7 @@ def get_studio_import_batch(db, studio_id, batch_id, lock=False):
 
 
 def batch_record_query(db, batch):
-    model = {"members": Member, "bookings": Booking, "payments": Payment}[batch.import_type]
+    model = {"members": Member, "bookings": Booking, "payments": Payment, "revenue": RevenueTransaction}[batch.import_type]
     return db.query(model).filter(
         model.studio_id == batch.studio_id,
         model.import_batch_id == batch.id
@@ -2109,7 +2249,7 @@ def protected_member_ids(db, studio_id, member_ids):
     if not member_ids:
         return set()
     protected = set()
-    for model in (Booking, Payment, FollowUp, ActionHistory, ActionStatus):
+    for model in (Booking, Payment, FollowUp, ActionHistory, ActionStatus, MemberMilestoneStatus):
         protected.update(
             row[0] for row in db.query(model.member_id).filter(
                 model.studio_id == studio_id,
@@ -2119,13 +2259,18 @@ def protected_member_ids(db, studio_id, member_ids):
     return protected
 
 
-def serialize_import_batch(db, batch, users=None):
+def serialize_import_batch(db, batch, users=None, data_sources=None):
     if users is None:
         user_ids = {batch.user_id, batch.rolled_back_by_user_id} - {None}
         users = {
             user.id: user.email
             for user in db.query(User).filter(User.id.in_(user_ids)).all()
         } if user_ids else {}
+    if data_sources is None:
+        data_sources = {
+            source.id: source.display_name
+            for source in db.query(StudioDataSource).filter(StudioDataSource.id == batch.studio_data_source_id, StudioDataSource.studio_id == batch.studio_id).all()
+        } if batch.studio_data_source_id else {}
     return {
         "id": batch.id,
         "import_type": batch.import_type,
@@ -2140,6 +2285,8 @@ def serialize_import_batch(db, batch, users=None):
         "performed_by": users.get(batch.user_id, "Unknown user"),
         "rolled_back_by": users.get(batch.rolled_back_by_user_id) if batch.rolled_back_by_user_id else None,
         "source_name": batch.source_name_snapshot
+        ,"studio_data_source_id": batch.studio_data_source_id
+        ,"platform_source": data_sources.get(batch.studio_data_source_id)
     }
 
 
@@ -2151,6 +2298,7 @@ def imports_page(request: Request, db: Session = Depends(get_db)):
     if current_user.role not in {"owner", "manager"}:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
     studio = get_studio(db, current_user.studio_id)
+    primary_source = get_primary_data_source(db, studio.id)
     return templates.TemplateResponse(
         request=request,
         name="imports.html",
@@ -2158,7 +2306,8 @@ def imports_page(request: Request, db: Session = Depends(get_db)):
             "studio_id": studio.id,
             "studio_name": studio.name,
             "user_email": current_user.email,
-            "user_role": current_user.role
+            "user_role": current_user.role,
+            "primary_platform": primary_source.platform if primary_source else None
         }
     )
 
@@ -2182,7 +2331,9 @@ def list_import_batches(
         user.id: user.email
         for user in db.query(User).filter(User.id.in_(user_ids)).all()
     } if user_ids else {}
-    return {"studio_id": studio_id, "imports": [serialize_import_batch(db, batch, users) for batch in batches]}
+    source_ids = {batch.studio_data_source_id for batch in batches if batch.studio_data_source_id}
+    data_sources = {source.id: source.display_name for source in db.query(StudioDataSource).filter(StudioDataSource.studio_id == studio_id, StudioDataSource.id.in_(source_ids)).all()} if source_ids else {}
+    return {"studio_id": studio_id, "imports": [serialize_import_batch(db, batch, users, data_sources) for batch in batches]}
 
 
 @app.get("/studios/{studio_id}/imports/{batch_id}")
@@ -2341,6 +2492,68 @@ def serialize_studio_settings(studio):
             else studio.sender_name
         )
     }
+
+
+def build_data_source_status(db, studio_id):
+    sources = db.query(StudioDataSource).filter(
+        StudioDataSource.studio_id == studio_id,
+        StudioDataSource.source_type == "management_platform"
+    ).order_by(StudioDataSource.created_at.desc(), StudioDataSource.id.desc()).all()
+    last_import_rows = db.query(
+        ImportBatch.studio_data_source_id,
+        func.max(ImportBatch.created_at).label("last_import_at")
+    ).filter(
+        ImportBatch.studio_id == studio_id,
+        ImportBatch.studio_data_source_id.is_not(None)
+    ).group_by(ImportBatch.studio_data_source_id).all()
+    last_import_by_source = {row.studio_data_source_id: row.last_import_at for row in last_import_rows}
+    serialized = []
+    for source in sources:
+        item = serialize_data_source(source)
+        item["last_import_at"] = last_import_by_source.get(source.id)
+        serialized.append(item)
+    primary = next((item for item in serialized if item["is_primary"] and item["is_active"]), None)
+    return {
+        "studio_id": studio_id,
+        "primary_source": primary,
+        "sources": serialized,
+        "availability": get_dataset_availability(db, studio_id),
+        "platforms": [
+            {"key": key, **definition}
+            for key, definition in PLATFORMS.items()
+        ],
+    }
+
+
+@app.get("/studios/{studio_id}/data-sources")
+def get_studio_data_sources(
+    studio_id: int,
+    authorized_user: User = Depends(require_studio_user),
+    db: Session = Depends(get_db)
+):
+    get_studio(db, studio_id)
+    return build_data_source_status(db, studio_id)
+
+
+@app.put("/studios/{studio_id}/data-sources/primary")
+def update_primary_data_source(
+    studio_id: int,
+    selection: PrimaryPlatformUpdate,
+    authorized_user: User = Depends(require_data_source_write),
+    db: Session = Depends(get_db)
+):
+    get_studio(db, studio_id)
+    try:
+        source = set_primary_platform(db, studio_id, selection.platform)
+        db.commit()
+        db.refresh(source)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Primary platform could not be changed")
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Data sources are temporarily unavailable")
+    return build_data_source_status(db, studio_id)
 
 
 @app.get("/studios/{studio_id}/settings")
@@ -2675,6 +2888,23 @@ def build_action_message_prompt(message_request, studio_name, currency):
             "observations. Return only the message text."
         )
 
+    if message_request.action_type == "attendance_milestone":
+        milestone_label = "first" if message_request.milestone_value == 1 else format_ordinal(message_request.milestone_value)
+        return (
+            f"Generate a short, warm congratulations message for {studio_name} member {first_name}, "
+            f"who reached their {milestone_label} attended class. Address them by first name; "
+            "be concise, celebratory, and not over-the-top. Do not invent rewards, discounts, promotions, or "
+            "membership details. Use 2 to 4 short sentences and return only the message text."
+        )
+
+    if message_request.action_type == "attendance_decline":
+        return (
+            f"Generate a warm check-in message for {studio_name} member {first_name}, whose attendance frequency "
+            "has declined. Do not say attendance is being monitored and do not mention percentages or use creepy "
+            "surveillance language. Invite them back, offer help, stay concise, and do not invent promotions. "
+            "Use 2 to 4 short sentences and return only the message text."
+        )
+
     amount_context = (
         f" The failed amount is {currency} "
         f"{message_request.failed_amount:,.2f}."
@@ -2713,6 +2943,12 @@ def generate_action_message(
             "member_name": f"{member.first_name} {member.last_name}"
         }
     )
+    if trusted_request.action_type in {"attendance_milestone", "attendance_decline"}:
+        attendance = get_attendance_aggregates(db, studio_id, datetime.now(timezone.utc)).get(member.id, {})
+        if trusted_request.action_type == "attendance_milestone" and attendance.get("total_attended", 0) < trusted_request.milestone_value:
+            raise HTTPException(status_code=409, detail="Attendance milestone has not been reached")
+        if trusted_request.action_type == "attendance_decline" and not attendance.get("attendance_declining"):
+            raise HTTPException(status_code=409, detail="Attendance decline is not currently active")
     api_key = settings.openai_api_key
 
     if not api_key:
@@ -3256,6 +3492,13 @@ def get_action_history(
             "event_type": entry.event_type,
             "priority": entry.priority,
             "message_text": entry.message_text,
+            "milestone_value": (
+                int(match.group(1))
+                if entry.event_type in {"attendance_milestone_celebrated", "attendance_milestone_dismissed"}
+                and entry.message_text
+                and (match := re.search(r"Attendance milestone (\d+)", entry.message_text))
+                else None
+            ),
             "created_at": entry.created_at
         }
         for entry, member in rows
@@ -3462,6 +3705,118 @@ def get_revenue_trend(
 
     return results
 
+
+def revenue_date_bounds(studio, range_name, start_date=None, end_date=None):
+    zone = ZoneInfo(studio.timezone)
+    local_now = datetime.now(timezone.utc).astimezone(zone)
+    today = local_now.date()
+    if range_name == "last_7_days": start, end = today - timedelta(days=6), today
+    elif range_name == "this_month": start, end = today.replace(day=1), today
+    elif range_name == "previous_month":
+        end = today.replace(day=1) - timedelta(days=1); start = end.replace(day=1)
+    elif range_name == "custom":
+        if not start_date or not end_date or start_date > end_date: raise HTTPException(status_code=400, detail="Valid custom dates are required")
+        start, end = start_date, end_date
+    else: start, end = today - timedelta(days=29), today
+    start_at = datetime.combine(start, datetime.min.time(), tzinfo=zone).astimezone(timezone.utc)
+    end_at = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=zone).astimezone(timezone.utc)
+    return start_at, end_at
+
+
+@app.get("/studios/{studio_id}/analytics/revenue")
+def get_revenue_analytics(
+    studio_id: int, range: Literal["last_7_days", "last_30_days", "this_month", "previous_month", "custom"] = "last_30_days",
+    start_date: date | None = None, end_date: date | None = None,
+    authorized_user: User = Depends(require_studio_user), db: Session = Depends(get_db)
+):
+    studio = get_studio(db, studio_id); start_at, end_at = revenue_date_bounds(studio, range, start_date, end_date)
+    base = [RevenueTransaction.studio_id == studio_id, RevenueTransaction.analytics_date >= start_at, RevenueTransaction.analytics_date < end_at]
+    totals = db.query(
+        func.coalesce(func.sum(RevenueTransaction.net_revenue), 0).label("net"),
+        func.coalesce(func.sum(RevenueTransaction.gross_revenue), 0).label("gross"),
+        func.count(RevenueTransaction.id).label("transactions"),
+        func.coalesce(func.sum(case((RevenueTransaction.transaction_kind == "refund", -RevenueTransaction.net_revenue), else_=0)), 0).label("refund_value"),
+        func.sum(case((RevenueTransaction.transaction_kind == "refund", 1), else_=0)).label("refund_count"),
+        func.coalesce(func.sum(RevenueTransaction.discount), 0).label("discounts"),
+    ).filter(*base).one()
+    def grouped(column, limit=None):
+        query = db.query(column.label("label"), func.count(RevenueTransaction.id).label("transactions"), func.sum(RevenueTransaction.gross_revenue).label("gross"), func.sum(RevenueTransaction.net_revenue).label("net")).filter(*base).group_by(column).order_by(func.sum(RevenueTransaction.net_revenue).desc())
+        if limit: query = query.limit(limit)
+        return [{"label": row.label or "Unspecified", "transactions": row.transactions, "gross_revenue": row.gross or 0, "net_revenue": row.net or 0} for row in query.all()]
+    trend_date = func.date(func.timezone(studio.timezone, RevenueTransaction.analytics_date)) if db.bind.dialect.name == "postgresql" else func.date(RevenueTransaction.analytics_date)
+    trend_rows = db.query(trend_date.label("date"), func.sum(RevenueTransaction.net_revenue).label("net")).filter(*base).group_by(trend_date).order_by(trend_date).all()
+    refund_rows = db.query(RevenueTransaction, Member).outerjoin(
+        Member, (Member.id == RevenueTransaction.member_id) & (Member.studio_id == studio_id)
+    ).filter(*base, RevenueTransaction.transaction_kind == "refund").order_by(
+        RevenueTransaction.analytics_date.desc(), RevenueTransaction.id.desc()
+    ).limit(10).all()
+    refund_gross = db.query(func.coalesce(func.sum(RevenueTransaction.gross_revenue), 0)).filter(
+        *base, RevenueTransaction.transaction_kind == "refund"
+    ).scalar()
+    latest_batch = db.query(ImportBatch, StudioDataSource).outerjoin(
+        StudioDataSource,
+        (StudioDataSource.id == ImportBatch.studio_data_source_id) & (StudioDataSource.studio_id == studio_id)
+    ).filter(
+        ImportBatch.studio_id == studio_id, ImportBatch.import_type == "revenue",
+        ImportBatch.status != "rolled_back"
+    ).order_by(ImportBatch.created_at.desc(), ImportBatch.id.desc()).first()
+    net_total = totals.net or Decimal("0")
+    def percentage(value):
+        return (value or Decimal("0")) * Decimal("100") / net_total if net_total else Decimal("0")
+    revenue_types = grouped(RevenueTransaction.revenue_type)
+    payment_methods = grouped(RevenueTransaction.payment_method)
+    for row in revenue_types: row["percentage"] = percentage(row["net_revenue"])
+    for row in payment_methods: row["percentage"] = percentage(row["net_revenue"])
+    return {
+        "available": get_dataset_availability(db, studio_id)["revenue"],
+        "selected_range": range, "range": {"start": start_at, "end": end_at},
+        "summary": {"net_revenue": totals.net, "gross_revenue": totals.gross, "transactions": totals.transactions, "refund_value": totals.refund_value, "refund_count": totals.refund_count or 0, "discounts": totals.discounts, "average_net_transaction": totals.net / totals.transactions if totals.transactions else 0},
+        "trend": [{"date": row.date, "net_revenue": row.net or 0} for row in trend_rows],
+        "by_revenue_type": revenue_types, "top_products": grouped(RevenueTransaction.description, 10),
+        "by_payment_method": payment_methods,
+        "refund_summary": {"count": totals.refund_count or 0, "net_value": totals.refund_value, "gross_value": abs(refund_gross or Decimal("0"))},
+        "recent_refunds": [serialize_revenue_transaction(transaction, member) for transaction, member in refund_rows],
+        "freshness": {"last_imported_at": latest_batch[0].created_at if latest_batch else None, "source": latest_batch[1].display_name if latest_batch and latest_batch[1] else None},
+    }
+
+
+def serialize_revenue_transaction(transaction, member=None):
+    customer = f"{member.first_name} {member.last_name}" if member else (transaction.customer_name or "Unknown customer")
+    return {
+        "id": transaction.id, "date": transaction.analytics_date, "customer": customer,
+        "member_id": member.id if member else None, "revenue_type": transaction.revenue_type or "Uncategorized",
+        "description": transaction.description or "—", "payment_method": transaction.payment_method or "Unknown",
+        "kind": "Refund" if transaction.transaction_kind == "refund" else "Revenue",
+        "gross_revenue": transaction.gross_revenue, "net_revenue": transaction.net_revenue,
+    }
+
+
+@app.get("/studios/{studio_id}/analytics/revenue/transactions")
+def get_revenue_transactions(
+    studio_id: int,
+    range: Literal["last_7_days", "last_30_days", "this_month", "previous_month", "custom"] = "this_month",
+    start_date: date | None = None, end_date: date | None = None,
+    kind: Literal["all", "revenue", "refund"] = "all", search: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1), page_size: int = Query(default=25, ge=1, le=25),
+    authorized_user: User = Depends(require_studio_user), db: Session = Depends(get_db),
+):
+    studio = get_studio(db, studio_id); start_at, end_at = revenue_date_bounds(studio, range, start_date, end_date)
+    filters = [RevenueTransaction.studio_id == studio_id, RevenueTransaction.analytics_date >= start_at, RevenueTransaction.analytics_date < end_at]
+    if kind != "all": filters.append(RevenueTransaction.transaction_kind == kind)
+    query = db.query(RevenueTransaction, Member).outerjoin(
+        Member, (Member.id == RevenueTransaction.member_id) & (Member.studio_id == studio_id)
+    ).filter(*filters)
+    term = (search or "").strip()
+    if term:
+        pattern = f"%{term}%"
+        query = query.filter(
+            RevenueTransaction.customer_name.ilike(pattern) | RevenueTransaction.customer_email.ilike(pattern) |
+            RevenueTransaction.description.ilike(pattern) | RevenueTransaction.external_transaction_id.ilike(pattern)
+        )
+    total_items = query.count(); total_pages = (total_items + page_size - 1) // page_size
+    rows = query.order_by(RevenueTransaction.analytics_date.desc(), RevenueTransaction.id.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {"items": [serialize_revenue_transaction(transaction, member) for transaction, member in rows], "page": page, "page_size": page_size, "total_items": total_items, "total_pages": total_pages, "has_previous": page > 1, "has_next": page < total_pages}
+
 def calculate_retention_status(last_visit_at, now, studio):
     if last_visit_at is None:
         return "critical", None
@@ -3501,6 +3856,76 @@ def get_latest_attendance_by_member(db, studio_id):
         row.member_id: row.last_visit_at
         for row in rows
     }
+
+
+def ensure_current_milestone_records(db, studio_id, attendance_by_member):
+    existing = {
+        (record.member_id, record.milestone_value): record
+        for record in db.query(MemberMilestoneStatus).filter(
+            MemberMilestoneStatus.studio_id == studio_id,
+            MemberMilestoneStatus.milestone_type == "attendance"
+        ).all()
+    }
+    created = False
+    for member_id, attendance in attendance_by_member.items():
+        value = attendance.get("last_milestone")
+        if value and (member_id, value) not in existing:
+            record = MemberMilestoneStatus(
+                studio_id=studio_id, member_id=member_id,
+                milestone_type="attendance", milestone_value=value, status="open"
+            )
+            db.add(record)
+            existing[(member_id, value)] = record
+            created = True
+    if created:
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+        existing = {
+            (record.member_id, record.milestone_value): record
+            for record in db.query(MemberMilestoneStatus).filter(
+                MemberMilestoneStatus.studio_id == studio_id,
+                MemberMilestoneStatus.milestone_type == "attendance"
+            ).all()
+        }
+    return existing
+
+
+@app.post("/studios/{studio_id}/members/{member_id}/milestones/{milestone_value}/status")
+def update_member_milestone_status(
+    studio_id: int, member_id: int, milestone_value: int,
+    status_request: MilestoneStatusUpdate,
+    authorized_user: User = Depends(require_studio_user),
+    db: Session = Depends(get_db)
+):
+    get_studio_member(db, studio_id, member_id)
+    if milestone_value not in ATTENDANCE_MILESTONES:
+        raise HTTPException(status_code=404, detail="Attendance milestone not found")
+    total = get_attendance_aggregates(db, studio_id, datetime.now(timezone.utc)).get(member_id, {}).get("total_attended", 0)
+    record = db.query(MemberMilestoneStatus).filter(
+        MemberMilestoneStatus.studio_id == studio_id,
+        MemberMilestoneStatus.member_id == member_id,
+        MemberMilestoneStatus.milestone_type == "attendance",
+        MemberMilestoneStatus.milestone_value == milestone_value
+    ).first()
+    if not record or total < milestone_value:
+        raise HTTPException(status_code=409, detail="Attendance milestone is not currently eligible")
+    record.status = status_request.status
+    record.acknowledged_at = datetime.now(timezone.utc)
+    record.acknowledged_by_user_id = authorized_user.id
+    db.add(ActionHistory(
+        studio_id=studio_id, member_id=member_id, action_type="attendance_milestone",
+        event_type=f"attendance_milestone_{status_request.status}",
+        message_text=f"Attendance milestone {milestone_value} {status_request.status}"
+    ))
+    try:
+        db.commit()
+        db.refresh(record)
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(status_code=503, detail="Milestone status is temporarily unavailable")
+    return {"member_id": member_id, "milestone_value": milestone_value, "status": record.status, "acknowledged_at": record.acknowledged_at}
 
 
 def build_member_summaries(db, studio):
@@ -3593,6 +4018,12 @@ def get_member_crm_detail(
     studio = get_studio(db, current_user.studio_id)
     member = get_studio_member(db, studio.id, member_id)
     now = datetime.now(timezone.utc)
+    attendance = get_attendance_aggregates(db, studio.id, now).get(
+        member.id,
+        {**get_attendance_milestone(0), **calculate_attendance_decline(0, 0), "last_visit_at": None}
+    )
+    milestone_records = ensure_current_milestone_records(db, studio.id, {member.id: attendance})
+    current_milestone = milestone_records.get((member.id, attendance.get("last_milestone")))
     last_visit = (
         db.query(func.max(Booking.booking_date))
         .filter(
@@ -3689,6 +4120,7 @@ def get_member_crm_detail(
             "id": studio.id,
             "name": studio.name,
             "currency": studio.currency,
+            "timezone": studio.timezone,
             "default_follow_up_days": studio.default_follow_up_days
         },
         "member": {
@@ -3700,6 +4132,12 @@ def get_member_crm_detail(
             "status": retention_status,
             "days_inactive": days_inactive,
             "last_visit_at": last_visit
+        },
+        "attendance": {
+            **attendance,
+            "average_visits_per_week": round((booking_summary_row.attended or 0) / max(1, ((now - (member.created_at.replace(tzinfo=timezone.utc) if member.created_at and member.created_at.tzinfo is None else member.created_at or now)).days / 7)), 2),
+            "milestone_status": current_milestone.status if current_milestone else None,
+            "milestone_acknowledged_at": current_milestone.acknowledged_at if current_milestone else None,
         },
         "booking_summary": {
             "total": booking_summary_row.total or 0,
@@ -3751,7 +4189,14 @@ def get_member_crm_detail(
                 "action_type": entry.action_type,
                 "event_type": entry.event_type,
                 "priority": entry.priority,
-                "created_at": entry.created_at
+                "created_at": entry.created_at,
+                "milestone_value": (
+                    int(match.group(1))
+                    if entry.event_type in {"attendance_milestone_celebrated", "attendance_milestone_dismissed"}
+                    and entry.message_text
+                    and (match := re.search(r"Attendance milestone (\d+)", entry.message_text))
+                    else None
+                )
             }
             for entry in history
         ]
@@ -3825,7 +4270,9 @@ def get_action_center(
         .all()
     )
 
-    latest_attendance = get_latest_attendance_by_member(db, studio_id)
+    now = datetime.now(timezone.utc)
+    attendance_by_member = get_attendance_aggregates(db, studio_id, now)
+    milestone_records = ensure_current_milestone_records(db, studio_id, attendance_by_member)
 
     failed_payment_rows = (
         db.query(
@@ -3849,7 +4296,6 @@ def get_action_center(
         for row in failed_payment_rows
     }
 
-    now = datetime.now(timezone.utc)
     action_statuses = get_action_status_map(db, studio_id)
     actions = []
 
@@ -3861,7 +4307,7 @@ def get_action_center(
 
         if member.status == "active":
             retention_status, days_inactive = calculate_retention_status(
-                latest_attendance.get(member.id),
+                attendance_by_member.get(member.id, {}).get("last_visit_at"),
                 now,
                 studio
             )
@@ -3882,22 +4328,15 @@ def get_action_center(
             priority = "watch"
             recommended_action = "Contact member"
         else:
-            continue
+            priority = None
+            recommended_action = None
 
-        action_type = (
-            "payment"
-            if priority == "payment"
-            else "retention"
-        )
-        action_status, _ = get_effective_action_status(
-            action_statuses.get((member.id, action_type)),
-            now
-        )
+        action_type = "payment" if priority == "payment" else "retention"
+        action_status, _ = get_effective_action_status(action_statuses.get((member.id, action_type)), now)
 
-        if action_status in {"resolved", "snoozed"}:
-            continue
-
-        actions.append({
+        if priority and action_status not in {"resolved", "snoozed"}:
+            actions.append({
+            "action_id": f"{action_type}:{member.id}",
             "member_id": member.id,
             "member_name": f"{member.first_name} {member.last_name}",
             "email": member.email,
@@ -3916,40 +4355,100 @@ def get_action_center(
                 if payment_data
                 else 0
             ),
-            "recommended_action": recommended_action
+                "recommended_action": recommended_action
+            })
+
+        attendance = attendance_by_member.get(member.id)
+        if member.status == "active" and attendance and attendance["attendance_declining"] and retention_status != "critical":
+            decline_status, _ = get_effective_action_status(action_statuses.get((member.id, "attendance_decline")), now)
+            if decline_status not in {"resolved", "snoozed"}:
+                actions.append({
+                    "action_id": f"attendance_decline:{member.id}", "member_id": member.id,
+                    "member_name": f"{member.first_name} {member.last_name}", "email": member.email,
+                    "action_type": "attendance_decline", "group": "needs_attention", "priority": "normal",
+                    "title": "Attendance Declining", "description": "Recent attendance is meaningfully below the previous baseline.",
+                    "recommended_action": "Check in before this member becomes At Risk", "action_status": decline_status,
+                    "retention_status": retention_status, "days_inactive": days_inactive,
+                    "failed_payment_count": 0, "failed_amount": 0,
+                    "baseline_visits_per_week": attendance["baseline_visits_per_week"],
+                    "recent_visits_per_week": attendance["recent_visits_per_week"],
+                    "attendance_change_percent": attendance["attendance_change_percent"],
+                    "last_visit_at": attendance["last_visit_at"],
+                })
+
+        if attendance and attendance["last_milestone"]:
+            value = attendance["last_milestone"]
+            ordinal = format_ordinal(value)
+            milestone = milestone_records.get((member.id, value))
+            if milestone and milestone.status == "open" and attendance["total_attended"] >= value:
+                actions.append({
+                    "action_id": f"attendance_milestone:{member.id}:{value}", "member_id": member.id,
+                    "member_name": f"{member.first_name} {member.last_name}", "email": member.email,
+                    "action_type": "attendance_milestone", "group": "celebration", "priority": "normal",
+                    "title": "First Class" if value == 1 else f"{ordinal} Class",
+                    "description": "Completed their first class" if value == 1 else f"Reached {value} attended classes",
+                    "recommended_action": "Celebrate the achievement", "action_status": "open",
+                    "retention_status": retention_status, "days_inactive": days_inactive,
+                    "failed_payment_count": 0, "failed_amount": 0,
+                    "milestone_value": value, "milestone_ordinal": ordinal,
+                    "total_attended": attendance["total_attended"], "last_visit_at": attendance["last_visit_at"],
+                    "created_at": milestone.created_at,
+                })
+
+    due_follow_up_rows = (
+        db.query(FollowUp, Member)
+        .join(Member, Member.id == FollowUp.member_id)
+        .filter(FollowUp.studio_id == studio_id, Member.studio_id == studio_id, FollowUp.status == "pending", FollowUp.due_at <= now)
+        .order_by(FollowUp.due_at.asc(), FollowUp.id.asc()).all()
+    )
+    for follow_up, member in due_follow_up_rows:
+        actions.append({
+            "action_id": f"follow_up:{follow_up.id}", "member_id": member.id,
+            "member_name": f"{member.first_name} {member.last_name}", "email": member.email,
+            "action_type": "follow_up", "group": "needs_attention", "priority": "normal",
+            "title": "Follow-Up Due", "description": follow_up.note or "A scheduled member follow-up is due.",
+            "recommended_action": "Complete the scheduled follow-up", "action_status": "open",
+            "retention_status": None, "days_inactive": None, "failed_payment_count": 0, "failed_amount": 0,
+            "follow_up_id": follow_up.id, "due_at": follow_up.due_at,
         })
 
-    priority_order = {
-        "urgent": 0,
-        "high": 1,
-        "payment": 2,
-        "watch": 3
-    }
+    for action in actions:
+        if "group" not in action:
+            action["group"] = "urgent" if action["priority"] == "urgent" or action["retention_status"] == "critical" else "needs_attention"
+            action["title"] = "Failed Payment" if action["action_type"] == "payment" else "Retention Attention"
+            action["description"] = action["recommended_action"]
+    priority_order = {"urgent": 0, "high": 1, "payment": 2, "watch": 4, "normal": 5}
+    type_order = {"retention": 0, "payment": 2, "follow_up": 3, "attendance_decline": 5, "attendance_milestone": 6}
 
     actions.sort(
         key=lambda action: (
-            priority_order[action["priority"]],
-            action["days_inactive"] is not None,
+            0 if action.get("priority") == "urgent" else type_order.get(action["action_type"], 9),
+            priority_order.get(action["priority"], 9),
+            -(action.get("attendance_change_percent") or 0),
+            -(action.get("milestone_value") or 0),
+            action.get("days_inactive") is not None,
             -(action["days_inactive"] or 0),
             action["member_name"].lower()
         )
     )
 
-    counts = {
-        priority: sum(
-            action["priority"] == priority
-            for action in actions
-        )
-        for priority in priority_order
+    due_follow_ups = len(due_follow_up_rows)
+    summary = {
+        "total_actions": len(actions),
+        "urgent": sum(action["group"] == "urgent" for action in actions),
+        "needs_attention": sum(action["group"] == "needs_attention" for action in actions),
+        "celebrations": sum(action["group"] == "celebration" for action in actions),
+        "due_follow_ups": due_follow_ups,
     }
 
     return {
         "studio_id": studio_id,
+        "summary": summary,
         "action_count": len(actions),
-        "urgent_count": counts["urgent"],
-        "high_count": counts["high"],
-        "payment_count": counts["payment"],
-        "watch_count": counts["watch"],
+        "urgent_count": summary["urgent"],
+        "high_count": sum(action["priority"] == "high" for action in actions),
+        "payment_count": sum(action["action_type"] == "payment" for action in actions),
+        "watch_count": sum(action["priority"] == "watch" for action in actions),
         "actions": actions
     }
 

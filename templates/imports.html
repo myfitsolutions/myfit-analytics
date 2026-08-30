@@ -13,6 +13,7 @@
             <nav class="dashboard-user-area" aria-label="Primary navigation">
                 <a class="settings-button" href="/dashboard">Dashboard</a>
                 <a class="settings-button" href="/members">Members</a>
+                <a class="settings-button" href="/revenue">Revenue</a>
                 <span>{{ user_email }} · {{ user_role | title }}</span>
                 <form method="post" action="/logout"><button class="settings-button" type="submit">Logout</button></form>
             </nav>
@@ -26,6 +27,7 @@
             <div class="import-type-grid">
                 <article><h3>Members</h3><p>Required: First Name, Last Name, Email<br>Optional: Status, Last Visit</p><button class="settings-button" type="button" data-import-type="members">Import Members</button></article>
                 <article><h3>Bookings</h3><p>Required: Member Email, Class Name, Booking Date, Status</p><button class="settings-button" type="button" data-import-type="bookings">Import Bookings</button></article>
+                {% if primary_platform == "hapana" %}<article><h3>Revenue</h3><p>Hapana Revenue V1 export. Net Revenue and a payment or invoice date are required.</p><button class="settings-button" type="button" data-import-type="revenue">Import Revenue</button></article>{% endif %}
                 <article><h3>Payments</h3><p>Required: Member Email, Amount, Payment Date, Status</p><button class="settings-button" type="button" data-import-type="payments">Import Payments</button></article>
             </div>
             <div id="mapping-workflow" class="mapping-workflow" hidden>

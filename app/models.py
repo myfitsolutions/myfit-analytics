@@ -5,10 +5,12 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
-    ForeignKey
+    ForeignKey,
+    text
 )
 from sqlalchemy.sql import func
 
@@ -54,23 +56,39 @@ class User(Base):
     password_hash = Column(String(500), nullable=False)
     role = Column(String(20), nullable=False, default="staff")
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now()
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class StudioDataSource(Base):
+    __tablename__ = "studio_data_sources"
+    __table_args__ = (
+        CheckConstraint("platform IN ('hapana', 'bsport', 'other')", name="ck_studio_data_sources_platform"),
+        CheckConstraint("source_type IN ('management_platform')", name="ck_studio_data_sources_type"),
+        Index("ix_studio_data_sources_studio_active", "studio_id", "is_active"),
+        Index(
+            "uq_studio_data_sources_active_primary_management",
+            "studio_id", unique=True,
+            postgresql_where=text("source_type = 'management_platform' AND is_primary AND is_active"),
+            sqlite_where=text("source_type = 'management_platform' AND is_primary = 1 AND is_active = 1"),
+        ),
     )
-    updated_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now()
-    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    studio_id = Column(Integer, ForeignKey("studios.id"), nullable=False, index=True)
+    source_type = Column(String(30), nullable=False, default="management_platform")
+    platform = Column(String(30), nullable=False)
+    display_name = Column(String(100), nullable=False)
+    is_primary = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 class ImportBatch(Base):
     __tablename__ = "import_batches"
     __table_args__ = (
         CheckConstraint(
-            "import_type IN ('members', 'bookings', 'payments')",
+            "import_type IN ('members', 'bookings', 'payments', 'revenue')",
             name="ck_import_batches_type"
         ),
         CheckConstraint(
@@ -95,6 +113,7 @@ class ImportBatch(Base):
     rolled_back_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     source_profile_id = Column(Integer, ForeignKey("import_source_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
     source_name_snapshot = Column(String(100), nullable=True)
+    studio_data_source_id = Column(Integer, ForeignKey("studio_data_sources.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class ImportMappingPreset(Base):
@@ -228,6 +247,44 @@ class Booking(Base):
     )
 
 
+class RevenueTransaction(Base):
+    __tablename__ = "revenue_transactions"
+    __table_args__ = (
+        UniqueConstraint("studio_id", "studio_data_source_id", "identity_key", name="uq_revenue_transactions_source_identity"),
+        CheckConstraint("transaction_kind IN ('revenue', 'refund', 'other')", name="ck_revenue_transactions_kind"),
+        Index("ix_revenue_transactions_studio_date", "studio_id", "analytics_date"),
+    )
+    id = Column(Integer, primary_key=True, index=True)
+    studio_id = Column(Integer, ForeignKey("studios.id"), nullable=False, index=True)
+    member_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, index=True)
+    studio_data_source_id = Column(Integer, ForeignKey("studio_data_sources.id", ondelete="SET NULL"), nullable=True, index=True)
+    import_batch_id = Column(Integer, ForeignKey("import_batches.id"), nullable=True, index=True)
+    identity_key = Column(String(128), nullable=False)
+    external_transaction_id = Column(String(255), nullable=True)
+    customer_name = Column(String(255), nullable=True)
+    customer_email = Column(String(320), nullable=True)
+    invoice_date = Column(DateTime(timezone=True), nullable=True)
+    payment_date = Column(DateTime(timezone=True), nullable=True)
+    analytics_date = Column(DateTime(timezone=True), nullable=False)
+    payment_method = Column(String(100), nullable=True)
+    source_status = Column(String(100), nullable=True)
+    transaction_kind = Column(String(20), nullable=False, default="other")
+    revenue_type = Column(String(100), nullable=True)
+    transaction_category = Column(String(255), nullable=True)
+    description = Column(String(500), nullable=True)
+    gross_revenue = Column(Numeric(14, 2), nullable=False, default=0)
+    net_revenue = Column(Numeric(14, 2), nullable=False)
+    tax = Column(Numeric(14, 2), nullable=True)
+    discount = Column(Numeric(14, 2), nullable=True)
+    admin_fee = Column(Numeric(14, 2), nullable=True)
+    dishonour_fee = Column(Numeric(14, 2), nullable=True)
+    transaction_fee = Column(Numeric(14, 2), nullable=True)
+    processed_by = Column(String(255), nullable=True)
+    sale_referred_by = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
 class ActionHistory(Base):
     __tablename__ = "action_history"
     __table_args__ = (
@@ -285,6 +342,26 @@ class ActionStatus(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
+
+
+class MemberMilestoneStatus(Base):
+    __tablename__ = "member_milestone_status"
+    __table_args__ = (
+        UniqueConstraint("studio_id", "member_id", "milestone_type", "milestone_value", name="uq_member_milestone_identity"),
+        CheckConstraint("status IN ('open', 'celebrated', 'dismissed')", name="ck_member_milestone_status"),
+        Index("ix_member_milestone_studio_status", "studio_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    studio_id = Column(Integer, ForeignKey("studios.id"), nullable=False, index=True)
+    member_id = Column(Integer, ForeignKey("members.id"), nullable=False, index=True)
+    milestone_type = Column(String(30), nullable=False, default="attendance")
+    milestone_value = Column(Integer, nullable=False)
+    status = Column(String(20), nullable=False, default="open")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    acknowledged_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
 class FollowUp(Base):

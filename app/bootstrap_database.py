@@ -16,6 +16,7 @@ REQUIRED_FOREIGN_KEYS = {
         (("user_id",), "users", ("id",)),
         (("rolled_back_by_user_id",), "users", ("id",)),
         (("source_profile_id",), "import_source_profiles", ("id",)),
+        (("studio_data_source_id",), "studio_data_sources", ("id",)),
     },
     "import_mapping_presets": {
         (("studio_id",), "studios", ("id",)),
@@ -31,6 +32,16 @@ REQUIRED_FOREIGN_KEYS = {
     "members": {(("import_batch_id",), "import_batches", ("id",))},
     "bookings": {(("import_batch_id",), "import_batches", ("id",))},
     "payments": {(("import_batch_id",), "import_batches", ("id",))},
+    "revenue_transactions": {
+        (("studio_id",), "studios", ("id",)), (("member_id",), "members", ("id",)),
+        (("studio_data_source_id",), "studio_data_sources", ("id",)), (("import_batch_id",), "import_batches", ("id",)),
+    },
+    "member_milestone_status": {
+        (("studio_id",), "studios", ("id",)),
+        (("member_id",), "members", ("id",)),
+        (("acknowledged_by_user_id",), "users", ("id",)),
+    },
+    "studio_data_sources": {(('studio_id',), 'studios', ('id',))},
 }
 
 REQUIRED_UNIQUE_OBJECTS = {
@@ -38,6 +49,9 @@ REQUIRED_UNIQUE_OBJECTS = {
     "import_mapping_presets": "uq_import_mapping_presets_studio_normalized_name",
     "import_source_profiles": "uq_import_source_profiles_studio_normalized_name",
     "members": "uq_members_studio_normalized_email",
+    "member_milestone_status": "uq_member_milestone_identity",
+    "studio_data_sources": "uq_studio_data_sources_active_primary_management",
+    "revenue_transactions": "uq_revenue_transactions_source_identity",
 }
 
 

@@ -24,6 +24,7 @@
             <div class="dashboard-user-area">
                 <span>{{ user_email }} · {{ user_role | title }}</span>
                 <a class="settings-button" href="/members">Members</a>
+                <a class="settings-button" href="/revenue">Revenue</a>
                 {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Imports</a>{% endif %}
                 {% if user_role == "owner" %}
                 <button id="open-team" class="settings-button" type="button">
@@ -41,6 +42,8 @@
             </div>
         </header>
 
+        <aside id="data-source-indicator" class="data-source-indicator" aria-live="polite"><strong>Data Source</strong><span id="data-source-name">Loading…</span><span id="data-source-updated"></span></aside>
+
         {% if not has_data %}
         <section class="panel dashboard-empty-guidance">
             <h2>No studio data yet</h2>
@@ -48,6 +51,13 @@
             {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Import Data</a>{% else %}<p>Ask an Owner or Manager to import studio data.</p>{% endif %}
         </section>
         {% endif %}
+
+        <section class="panel revenue-intelligence-panel revenue-snapshot-panel">
+            <div class="crm-title"><div><h2>Revenue Snapshot</h2><p>This month from normalized revenue transactions</p></div><a class="settings-button" href="/revenue">View Revenue Details</a></div>
+            <div id="revenue-kpis" class="revenue-kpis"></div>
+            <p id="revenue-intelligence-state" class="settings-status" aria-live="polite"></p>
+            <a id="revenue-upload-link" class="settings-button" href="/imports" hidden>Upload Revenue Data</a>
+        </section>
 
 
         <!-- TOP CARDS -->
@@ -201,6 +211,11 @@
                     </div>
                 </div>
 
+                <div id="action-center-summary" class="action-summary" aria-live="polite"></div>
+                <div id="action-center-filters" class="action-filters" aria-label="Action Center filters">
+                    <button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="urgent">Urgent</button><button type="button" data-filter="retention">Retention</button><button type="button" data-filter="payment">Payments</button><button type="button" data-filter="attendance">Attendance</button><button type="button" data-filter="celebration">Celebrations</button><button type="button" data-filter="follow_up">Follow-Ups</button>
+                </div>
+
                 <div
                     id="action-center-list"
                     class="action-center-list"
@@ -247,7 +262,11 @@
                         <h3>Action History</h3>
                         <p>Recent Action Center activity</p>
                     </div>
+                    <label for="action-history-filter" class="sr-only">Filter action history</label>
+                    <select id="action-history-filter"><option value="all">All Activity</option><option value="retention">Retention</option><option value="payment">Payments</option><option value="attendance">Attendance</option><option value="milestone">Milestones</option><option value="follow_up">Follow-Ups</option></select>
                 </div>
+
+                <div class="action-history-columns" aria-hidden="true"><span>Date &amp; Time</span><span>Activity</span><span>Type</span></div>
 
                 <div
                     id="action-history-list"
@@ -297,25 +316,6 @@
                 </div>
             </div>
         </section>
-        <!-- REVENUE CHART -->
-
-        <section class="chart-section">
-
-            <div class="panel chart-panel">
-
-                <div class="chart-header">
-                    <h3>Revenue Trend</h3>
-                    <p>Last 6 months</p>
-                </div>
-
-                <div class="chart-container">
-                    <canvas id="revenue-chart"></canvas>
-                </div>
-
-            </div>
-
-        </section>
-
     </div>
 
     {% if user_role == "owner" %}
@@ -394,6 +394,14 @@
                 <input id="setting-follow-up" type="number" min="1" max="365" required>
                 <span>days</span>
             </label>
+
+            <fieldset class="settings-fieldset data-source-settings">
+                <legend>Data Sources</legend>
+                <p><strong>Primary Platform</strong></p><p id="settings-data-source-name">Loading…</p>
+                <p id="settings-data-availability" class="settings-help"></p><p id="settings-data-last-import" class="settings-help"></p>
+                <div class="data-source-controls"><select id="setting-primary-platform" aria-label="Primary studio platform"></select><button id="save-primary-platform" class="modal-button modal-button-primary" type="button">Choose Platform</button><a class="modal-button" href="/imports">Upload Data</a><a class="modal-button" href="/imports">Import History</a></div>
+                <p id="data-source-status" class="settings-status" aria-live="polite"></p>
+            </fieldset>
 
             <div class="message-modal-footer">
                 <p id="settings-status" class="settings-status" aria-live="polite"></p>
@@ -476,13 +484,7 @@
     </div>
 
 
-    <!-- CHART.JS -->
-
-    <script
-        src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
-    ></script>
-
-
+    <script src="/static/activity_history.js"></script>
     <script>
 
         const STUDIO_ID = {{ studio_id | tojson }};
@@ -491,7 +493,7 @@
             currency: "PHP",
             default_follow_up_days: 3
         };
-        let revenueChart = null;
+        let dataSourceStatus = null;
 
         function studioUrl(path) {
             return `/studios/${STUDIO_ID}${path}`;
@@ -507,6 +509,18 @@
                     maximumFractionDigits: 2
                 }
             ).format(Number(value) || 0);
+        }
+
+        async function loadRevenueIntelligence() {
+            const state=document.getElementById("revenue-intelligence-state");
+            try {
+                const response=await fetch(studioUrl("/analytics/revenue?range=this_month"));
+                if(!response.ok)throw new Error(`Revenue request failed with ${response.status}`);
+                const data=await response.json(), summary=data.summary, kpis=document.getElementById("revenue-kpis");kpis.replaceChildren();
+                document.getElementById("revenue-upload-link").hidden=data.available || !["owner","manager"].includes(CURRENT_USER_ROLE);
+                if(!data.available){state.textContent="Revenue data not imported yet.";state.className="settings-status";return;}
+                [["Net Revenue",formatCurrency(summary.net_revenue)],["Gross Revenue",formatCurrency(summary.gross_revenue)],["Transactions",summary.transactions],["Refunds",`${formatCurrency(summary.refund_value)} · ${summary.refund_count}`]].forEach(([label,value])=>{const card=document.createElement("div");card.append(actionHistoryText("span","",label),actionHistoryText("strong","",String(value)));kpis.appendChild(card);});state.textContent=summary.transactions?"":"No revenue transactions found for this period.";state.className="settings-status";
+            } catch(error){state.textContent="Revenue analytics are temporarily unavailable.";state.className="settings-status settings-status-error";}
         }
 
         const settingsModal = document.getElementById("settings-modal");
@@ -546,6 +560,28 @@
             return studioSettings;
         }
 
+        function formatDataSourceDate(value) {
+            if (!value) return "No imports attributed yet";
+            return new Date(value).toLocaleDateString(undefined, {year:"numeric", month:"short", day:"numeric", timeZone:studioSettings.timezone});
+        }
+
+        async function loadDataSourceStatus() {
+            const response = await fetch(studioUrl("/data-sources"));
+            if (!response.ok) throw new Error(`Data source request failed with ${response.status}`);
+            dataSourceStatus = await response.json();
+            const primary = dataSourceStatus.primary_source;
+            document.getElementById("data-source-name").textContent = primary ? primary.display_name : "Not configured";
+            document.getElementById("data-source-updated").textContent = primary ? `Last updated ${formatDataSourceDate(primary.last_import_at)}` : "";
+            document.getElementById("settings-data-source-name").textContent = primary ? `${primary.display_name} · Active` : "No primary platform selected";
+            const available = Object.entries(dataSourceStatus.availability).filter(([, value]) => value).map(([key]) => key[0].toUpperCase() + key.slice(1));
+            document.getElementById("settings-data-availability").textContent = available.length ? `Data currently available: ${available.join(", ")}` : "No normalized datasets imported yet.";
+            document.getElementById("settings-data-last-import").textContent = `Last Import: ${formatDataSourceDate(primary?.last_import_at)}`;
+            const select = document.getElementById("setting-primary-platform"); select.replaceChildren();
+            dataSourceStatus.platforms.forEach(platform => { const option=document.createElement("option"); option.value=platform.key; option.textContent=platform.name; option.selected=primary?.platform===platform.key; select.appendChild(option); });
+            document.getElementById("save-primary-platform").textContent = primary ? "Change Platform" : "Choose Platform";
+            return dataSourceStatus;
+        }
+
         async function openSettingsModal() {
             settingsModal.hidden = false;
             document.body.classList.add("modal-open");
@@ -553,7 +589,7 @@
             saveSettingsButton.disabled = true;
 
             try {
-                await loadStudioSettings();
+                await Promise.all([loadStudioSettings(), loadDataSourceStatus()]);
                 const canEditSettings = CURRENT_USER_ROLE === "owner";
                 Object.values(settingsFields).forEach(field => {
                     field.disabled = !canEditSettings;
@@ -622,7 +658,7 @@
                 await Promise.all([
                     loadAnalytics(),
                     loadMonthlyAnalytics(),
-                    loadRevenueChart(),
+                    loadRevenueIntelligence(),
                     loadRetentionHealth(),
                     loadPaymentRecovery(),
                     loadActionCenter()
@@ -638,6 +674,17 @@
                 saveSettingsButton.disabled = false;
                 saveSettingsButton.textContent = "Save Settings";
             }
+        });
+
+        document.getElementById("save-primary-platform").addEventListener("click", async event => {
+            const button = event.currentTarget; const status = document.getElementById("data-source-status");
+            button.disabled = true; status.textContent = "Saving platform…";
+            try {
+                const response = await fetch(studioUrl("/data-sources/primary"), {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify({platform:document.getElementById("setting-primary-platform").value})});
+                if (!response.ok) throw new Error(`Platform update failed with ${response.status}`);
+                await loadDataSourceStatus(); status.textContent = "Primary platform updated."; status.className = "settings-status settings-status-success";
+            } catch (error) { status.textContent = "Unable to update primary platform."; status.className = "settings-status settings-status-error"; }
+            finally { button.disabled = false; }
         });
 
         const openSettingsButton = document.getElementById("open-settings");
@@ -1159,11 +1206,16 @@
             return `Hi ${firstName},\n\nIt looks like there was an issue processing your recent payment of ${failedAmount}.\n\nPlease update your payment details when convenient.\nLet us know if you need any help.`;
         }
 
+        function generateAttendanceMessage(action) {
+            const firstName = getMemberFirstName(action.member_name);
+            if (action.action_type === "attendance_milestone") return `Hi ${firstName},\n\nCongratulations on completing your ${action.milestone_ordinal} class! We love having you as part of the studio community and look forward to seeing you again soon.`;
+            return `Hi ${firstName},\n\nWe'd love to see you back at the studio. If there's anything we can do to help you get into your next class, just let us know.`;
+        }
+
         async function openMessageModal(action, messageType, trigger) {
-            const fallbackMessage =
-                messageType === "payment"
-                    ? generatePaymentMessage(action)
-                    : generateRetentionMessage(action);
+            const fallbackMessage = messageType === "payment" ? generatePaymentMessage(action)
+                : messageType.startsWith("attendance_") ? generateAttendanceMessage(action)
+                : generateRetentionMessage(action);
             const currentRequestId = ++messageRequestId;
 
             modalTrigger = trigger;
@@ -1171,10 +1223,9 @@
             activeMessageType = messageType;
             messageModalMember.textContent = action.member_name;
             messageModalRecipient.textContent = `To: ${action.email}`;
-            messageSubject.value =
-                messageType === "payment"
-                    ? "Payment update needed"
-                    : "We'd love to see you back";
+            messageSubject.value = messageType === "payment" ? "Payment update needed"
+                : messageType === "attendance_milestone" ? `Congratulations on your ${action.milestone_ordinal} class!`
+                : "We'd love to see you back";
             messageSubject.disabled = false;
             suggestedMessage.value = "Generating suggested message...";
             suggestedMessage.disabled = true;
@@ -1209,6 +1260,7 @@
                             retention_status: action.retention_status,
                             days_inactive: action.days_inactive,
                             failed_amount: action.failed_amount,
+                            milestone_value: action.milestone_value,
                             priority: action.priority
                         })
                     }
@@ -1468,62 +1520,35 @@
             }
         });
 
-        function getActionHistoryLabel(entry) {
-            if (entry.event_type === "follow_up_scheduled") {
-                return "Follow-up scheduled";
-            }
+        let dashboardActionHistory = [];
 
-            if (entry.event_type === "follow_up_completed") {
-                return "Follow-up completed";
-            }
+        function actionHistoryText(tag, className, value) {
+            const element = document.createElement(tag);
+            element.className = className;
+            element.textContent = value;
+            return element;
+        }
 
-            if (entry.event_type === "follow_up_cancelled") {
-                return "Follow-up cancelled";
-            }
-
-            if (entry.event_type === "action_contacted") {
-                return "Action marked contacted";
-            }
-
-            if (entry.event_type === "action_resolved") {
-                return "Action marked resolved";
-            }
-
-            if (entry.event_type === "action_snoozed") {
-                return "Action snoozed";
-            }
-
-            if (entry.event_type === "action_reopened") {
-                return "Action reopened";
-            }
-
-            if (entry.event_type === "email_sent") {
-                return entry.action_type === "payment"
-                    ? "Payment recovery email sent"
-                    : "Retention email sent";
-            }
-
-            if (entry.event_type === "email_failed") {
-                return entry.action_type === "payment"
-                    ? "Payment recovery email failed"
-                    : "Retention email failed";
-            }
-
-            if (entry.event_type === "ai_message_generated") {
-                return entry.action_type === "payment"
-                    ? "AI payment recovery message generated"
-                    : "AI retention message generated";
-            }
-
-            if (entry.event_type === "fallback_message_generated") {
-                return entry.action_type === "payment"
-                    ? "Standard payment recovery message generated"
-                    : "Standard retention message generated";
-            }
-
-            return entry.action_type === "payment"
-                ? "Payment recovery message copied"
-                : "Retention message copied";
+        function renderDashboardActionHistory() {
+            const list = document.getElementById("action-history-list");
+            const selected = document.getElementById("action-history-filter").value;
+            list.replaceChildren();
+            dashboardActionHistory.forEach(entry => {
+                const presentation = window.MyFitActivity.present(entry, {contextualTitles: true});
+                if (selected !== "all" && presentation.category !== selected) return;
+                const item = document.createElement("article");
+                item.className = "action-history-item";
+                const timestamp = window.MyFitActivity.formatDate(entry.created_at, studioSettings.timezone);
+                const time = document.createElement("time"); time.dateTime = entry.created_at;
+                time.append(actionHistoryText("span", "action-history-date", timestamp.date), actionHistoryText("span", "action-history-time", timestamp.time));
+                const content = document.createElement("div"); content.className = "action-history-content";
+                content.appendChild(actionHistoryText("strong", "action-history-title", `${presentation.icon} ${presentation.title}`));
+                if (presentation.description) content.appendChild(actionHistoryText("span", "action-history-description", presentation.description));
+                const member = document.createElement("a"); member.className = "dashboard-member-link action-history-member"; member.href = `/members/${entry.member_id}`; member.textContent = entry.member_name; content.appendChild(member);
+                const badge = actionHistoryText("span", `crm-activity-badge crm-activity-badge-${presentation.category}`, presentation.type);
+                item.append(time, content, badge); list.appendChild(item);
+            });
+            if (!list.children.length) list.appendChild(actionHistoryText("p", "action-history-state", dashboardActionHistory.length ? "No activity matches this filter." : "No Action Center activity yet."));
         }
 
         async function loadActionHistory() {
@@ -1539,47 +1564,8 @@
                 }
 
                 const data = await response.json();
-                list.replaceChildren();
-
-                if (data.history.length === 0) {
-                    const emptyState = document.createElement("p");
-                    emptyState.className = "action-history-state";
-                    emptyState.textContent = "No Action Center activity yet.";
-                    list.appendChild(emptyState);
-                    return;
-                }
-
-                data.history.forEach(entry => {
-                    const item = document.createElement("article");
-                    item.className = "action-history-item";
-
-                    const content = document.createElement("div");
-                    const name = document.createElement("a");
-                    name.className = "dashboard-member-link";
-                    name.href = `/members/${entry.member_id}`;
-                    const description = document.createElement("p");
-                    const timestamp = document.createElement("time");
-                    const createdAt = new Date(entry.created_at);
-
-                    name.textContent = entry.member_name;
-                    description.textContent = getActionHistoryLabel(entry);
-                    timestamp.dateTime = entry.created_at;
-                    timestamp.textContent = Number.isNaN(createdAt.getTime())
-                        ? "Date unavailable"
-                        : createdAt.toLocaleString(
-                            undefined,
-                            {
-                                month: "short",
-                                day: "numeric",
-                                hour: "numeric",
-                                minute: "2-digit"
-                            }
-                        );
-
-                    content.append(name, description);
-                    item.append(content, timestamp);
-                    list.appendChild(item);
-                });
+                dashboardActionHistory = data.history;
+                renderDashboardActionHistory();
             } catch (error) {
                 console.error("Action history error:", error);
                 list.replaceChildren();
@@ -1590,6 +1576,8 @@
                 list.appendChild(errorState);
             }
         }
+
+        document.getElementById("action-history-filter").addEventListener("change", renderDashboardActionHistory);
 
         async function updateActionStatus(
             action,
@@ -1700,7 +1688,7 @@
                         undefined,
                         {month: "short", day: "numeric"}
                     );
-                await Promise.all([loadFollowUps(), loadActionHistory()]);
+                await Promise.all([loadFollowUps(), loadActionHistory(), loadActionCenter()]);
             } catch (error) {
                 console.error("Follow-up scheduling error:", error);
                 state.textContent = "Unable to schedule follow-up. Try again.";
@@ -1736,7 +1724,7 @@
                     );
                 }
 
-                await Promise.all([loadFollowUps(), loadActionHistory()]);
+                await Promise.all([loadFollowUps(), loadActionHistory(), loadActionCenter()]);
             } catch (error) {
                 console.error("Follow-up update error:", error);
                 state.textContent = "Unable to update follow-up. Try again.";
@@ -1895,6 +1883,42 @@
             }
         }
 
+        let actionCenterActions = [];
+        let actionCenterRenderedItems = new Map();
+        let activeActionFilter = "all";
+
+        function actionMatchesFilter(action, filter) {
+            const mapping = {
+                retention: "retention",
+                payment: "payment",
+                attendance: "attendance_decline",
+                celebration: "attendance_milestone",
+                follow_up: "follow_up"
+            };
+            if (filter === "all") return true;
+            if (filter === "urgent") return action.group === "urgent" || action.priority === "urgent";
+            return action.action_type === mapping[filter];
+        }
+
+        function renderFilteredActionCenter() {
+            const list = document.getElementById("action-center-list");
+            const matching = actionCenterActions.filter(action => actionMatchesFilter(action, activeActionFilter));
+            list.replaceChildren();
+            matching.forEach(action => {
+                const item = actionCenterRenderedItems.get(action.action_id);
+                if (item) list.appendChild(item);
+            });
+            if (!matching.length) {
+                const emptyState = document.createElement("p");
+                emptyState.className = "action-center-state";
+                emptyState.textContent = actionCenterActions.length ? "No actions match this filter." : "No members need attention right now.";
+                list.appendChild(emptyState);
+            }
+            document.querySelectorAll("#action-center-filters button").forEach(button => {
+                button.setAttribute("aria-pressed", String(button.dataset.filter === activeActionFilter));
+            });
+        }
+
         async function loadActionCenter() {
             const count = document.getElementById("action-center-count");
             const list = document.getElementById("action-center-list");
@@ -1912,26 +1936,34 @@
                 const memberLabel = data.action_count === 1 ? "member" : "members";
                 count.textContent =
                     `${data.action_count} ${memberLabel} need attention`;
+                const summary = document.getElementById("action-center-summary");
+                summary.replaceChildren();
+                [["Total Actions", data.summary.total_actions], ["Urgent", data.summary.urgent], ["Needs Attention", data.summary.needs_attention], ["Celebrations", data.summary.celebrations], ["Follow-Ups Due", data.summary.due_follow_ups]].forEach(([label, value]) => {
+                    const card = document.createElement("div"); card.append(document.createTextNode(label), Object.assign(document.createElement("strong"), {textContent: value})); summary.appendChild(card);
+                });
                 list.replaceChildren();
-
-                if (data.actions.length === 0) {
-                    const emptyState = document.createElement("p");
-                    emptyState.className = "action-center-state";
-                    emptyState.textContent = "No members need attention right now.";
-                    list.appendChild(emptyState);
-                    return;
-                }
+                actionCenterActions = data.actions;
+                actionCenterRenderedItems = new Map();
 
                 data.actions.forEach(action => {
                     const item = document.createElement("article");
                     item.className = "action-item";
+                    item.dataset.actionType = action.action_type;
+                    item.dataset.group = action.group;
+                    actionCenterRenderedItems.set(action.action_id, item);
 
                     const content = document.createElement("div");
-                    content.className = "action-item-content";
+                    content.className = action.action_type === "attendance_milestone"
+                        ? "action-item-content action-item-content-milestone"
+                        : "action-item-content";
 
                     const badge = document.createElement("span");
                     badge.className = `action-priority action-priority-${action.priority}`;
-                    badge.textContent = action.priority;
+                    badge.textContent = action.action_type === "attendance_milestone" ? "Attendance Milestone" : (action.title || action.priority);
+
+                    const achievement = document.createElement("h4");
+                    achievement.className = "action-achievement";
+                    achievement.textContent = action.title || "";
 
                     const name = document.createElement("a");
                     name.className = "action-member-name";
@@ -1941,7 +1973,9 @@
                     const details = document.createElement("div");
                     details.className = "action-details";
 
-                    if (action.days_inactive === null && action.retention_status) {
+                    if (action.action_type === "attendance_milestone") {
+                        const completed = document.createElement("span"); completed.textContent = action.description; details.appendChild(completed);
+                    } else if (action.days_inactive === null && action.retention_status) {
                         const inactivity = document.createElement("span");
                         inactivity.textContent = "No attendance recorded";
                         details.appendChild(inactivity);
@@ -1951,7 +1985,7 @@
                         details.appendChild(inactivity);
                     }
 
-                    if (action.retention_status) {
+                    if (action.retention_status && action.action_type !== "attendance_milestone") {
                         const retention = document.createElement("span");
                         retention.textContent =
                             `${action.retention_status.replace("_", " ")} retention risk`;
@@ -1965,6 +1999,17 @@
                             " failed payment";
                         details.appendChild(payment);
                     }
+                    if (action.action_type === "attendance_decline") {
+                        const decline = document.createElement("span");
+                        decline.textContent = `${action.baseline_visits_per_week} previous → ${action.recent_visits_per_week} recent visits/week (↓ ${action.attendance_change_percent}%)`;
+                        details.appendChild(decline);
+                    }
+                    if (action.action_type === "attendance_milestone") {
+                        const milestone = document.createElement("span"); milestone.textContent = `Total visits: ${action.total_attended}`; details.appendChild(milestone);
+                        const lastAttended = document.createElement("span");
+                        lastAttended.textContent = `Last attended: ${action.days_inactive === 0 ? "today" : action.days_inactive === 1 ? "1 day ago" : `${action.days_inactive} days ago`}`;
+                        details.appendChild(lastAttended);
+                    }
 
                     const statusBadge = document.createElement("span");
                     statusBadge.className =
@@ -1973,7 +2018,8 @@
                         `Status: ${action.action_status}`;
                     details.appendChild(statusBadge);
 
-                    content.append(badge, name, details);
+                    if (action.action_type === "attendance_milestone") content.append(badge, achievement, name, details);
+                    else content.append(badge, name, details);
 
                     const controls = document.createElement("div");
                     controls.className = "action-controls";
@@ -1985,10 +2031,13 @@
                     button.textContent =
                         messageType === "payment"
                             ? "Recover Payment"
-                            : "Contact Member";
+                            : messageType === "attendance_milestone" ? "Generate Congrats"
+                            : messageType === "attendance_decline" ? "Generate Check-In" : "Contact Member";
                     button.addEventListener("click", () => {
-                        openMessageModal(action, messageType, button);
+                        if (messageType === "follow_up") window.location.assign(`/members/${action.member_id}`);
+                        else openMessageModal(action, messageType, button);
                     });
+                    if (messageType === "follow_up") button.textContent = "View Follow-Up";
 
                     const statusControls = document.createElement("div");
                     statusControls.className = "action-status-controls";
@@ -2071,7 +2120,19 @@
                     if (CURRENT_USER_ROLE !== "staff") {
                         statusControls.append(resolveButton, snoozeSelect);
                     }
-                    statusControls.append(followUpSelect);
+                    if (action.action_type === "attendance_milestone") {
+                        statusControls.replaceChildren();
+                        [["celebrated", "Mark Celebrated"], ["dismissed", "Dismiss"]].forEach(([status, label]) => {
+                            const acknowledge = document.createElement("button"); acknowledge.type = "button"; acknowledge.className = "action-status-button"; acknowledge.textContent = label;
+                            acknowledge.addEventListener("click", async () => {
+                                acknowledge.disabled = true;
+                                const response = await fetch(studioUrl(`/members/${action.member_id}/milestones/${action.milestone_value}/status`), {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({status})});
+                                if (response.ok) await Promise.all([loadActionCenter(), loadActionHistory()]); else acknowledge.disabled = false;
+                            }); statusControls.appendChild(acknowledge);
+                        });
+                    }
+                    if (action.action_type === "follow_up") statusControls.replaceChildren();
+                    if (action.action_type !== "attendance_milestone") statusControls.append(followUpSelect);
 
                     if (
                         action.action_status === "contacted"
@@ -2099,6 +2160,7 @@
                     item.append(content, controls);
                     list.appendChild(item);
                 });
+                renderFilteredActionCenter();
             } catch (error) {
                 console.error("Action center error:", error);
                 count.textContent = "Action Center unavailable";
@@ -2110,6 +2172,13 @@
                 list.appendChild(errorState);
             }
         }
+
+        document.querySelectorAll("#action-center-filters button").forEach(button => {
+            button.addEventListener("click", () => {
+                activeActionFilter = button.dataset.filter;
+                renderFilteredActionCenter();
+            });
+        });
 
 
         // ---------------------------------
@@ -2174,135 +2243,6 @@
 
 
         // ---------------------------------
-        // REVENUE CHART
-        // ---------------------------------
-
-        async function loadRevenueChart() {
-
-            try {
-
-                const response = await fetch(
-                    studioUrl("/analytics/revenue-trend")
-                );
-
-                const data =
-                    await response.json();
-
-
-                const labels =
-                    data.map(
-                        item => item.month
-                    );
-
-
-                const revenue =
-                    data.map(
-                        item => item.revenue
-                    );
-
-
-                const canvas =
-                    document.getElementById(
-                        "revenue-chart"
-                    );
-
-
-                if (!canvas) {
-
-                    console.error(
-                        "Revenue chart canvas not found"
-                    );
-
-                    return;
-                }
-
-
-                if (
-                    typeof Chart === "undefined"
-                ) {
-
-                    console.error(
-                        "Chart.js did not load"
-                    );
-
-                    return;
-                }
-
-
-                if (revenueChart) {
-                    revenueChart.destroy();
-                }
-
-                revenueChart = new Chart(
-                    canvas,
-                    {
-                        type: "line",
-
-                        data: {
-                            labels: labels,
-
-                            datasets: [{
-                                label: "Revenue",
-                                data: revenue,
-                                borderWidth: 2,
-                                tension: 0.3,
-                                fill: false
-                            }]
-                        },
-
-                        options: {
-
-                            responsive: true,
-
-                            maintainAspectRatio:
-                                false,
-
-                            plugins: {
-
-                                legend: {
-                                    display: false
-                                },
-
-                                tooltip: {
-                                    callbacks: {
-                                        label: context =>
-                                            `Revenue: ${formatCurrency(context.parsed.y)}`
-                                    }
-                                }
-
-                            },
-
-                            scales: {
-
-                                y: {
-
-                                    beginAtZero: true,
-
-                                    ticks: {
-
-                                        callback:
-                                            function(value) {
-
-                                                return formatCurrency(value);
-                                            }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                );
-
-            } catch (error) {
-
-                console.error(
-                    "Revenue chart error:",
-                    error
-                );
-            }
-        }
-
-
-        // ---------------------------------
         // LOAD DASHBOARD
         // ---------------------------------
 
@@ -2320,9 +2260,10 @@
             }
 
             await Promise.all([
+                loadDataSourceStatus(),
+                loadRevenueIntelligence(),
                 loadAnalytics(),
                 loadMonthlyAnalytics(),
-                loadRevenueChart(),
                 loadRetentionHealth(),
                 loadPaymentRecovery(),
                 loadActionCenter(),

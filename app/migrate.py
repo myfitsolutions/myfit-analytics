@@ -3,6 +3,9 @@ from app.migrate_import_history import run_migration as migrate_import_history
 from app.migrate_import_presets import run_migration as migrate_import_presets
 from app.migrate_import_sources import run_migration as migrate_import_sources
 from app.migrate_onboarding import run_migration as migrate_onboarding
+from app.migrate_attendance_milestones import run_migration as migrate_attendance_milestones
+from app.migrate_studio_data_sources import run_migration as migrate_studio_data_sources
+from app.migrate_revenue_transactions import run_migration as migrate_revenue_transactions
 
 
 def run_all_migrations():
@@ -11,7 +14,10 @@ def run_all_migrations():
         ("import history", migrate_import_history),
         ("import presets", migrate_import_presets),
         ("import sources", migrate_import_sources),
-        ("onboarding", migrate_onboarding)
+        ("onboarding", migrate_onboarding),
+        ("attendance milestones", migrate_attendance_milestones),
+        ("studio data sources", migrate_studio_data_sources),
+        ("revenue transactions", migrate_revenue_transactions)
     ):
         print(f"Running {name} migration...")
         migration()

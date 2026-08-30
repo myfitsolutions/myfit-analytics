@@ -19,6 +19,7 @@ ROLE_PERMISSIONS = {
         "booking_import",
         "payment_import",
         "import_history"
+        ,"data_source_write"
     },
     "manager": {
         "email_send",
@@ -27,6 +28,7 @@ ROLE_PERMISSIONS = {
         "booking_import",
         "payment_import",
         "import_history"
+        ,"data_source_write"
     },
     "staff": set()
 }
@@ -120,3 +122,4 @@ require_member_import = require_studio_permission("member_import")
 require_booking_import = require_studio_permission("booking_import")
 require_payment_import = require_studio_permission("payment_import")
 require_import_history = require_studio_permission("import_history")
+require_data_source_write = require_studio_permission("data_source_write")

@@ -23,7 +23,12 @@
         const options = withTime
             ? {year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit"}
             : {year: "numeric", month: "short", day: "numeric"};
+        if (crmData?.studio?.timezone) options.timeZone = crmData.studio.timezone;
         return new Date(value).toLocaleString(undefined, options);
+    }
+
+    function formatActivityDate(value) {
+        return window.MyFitActivity.formatDate(value, crmData?.studio?.timezone);
     }
 
     function textElement(tag, className, text) {
@@ -449,22 +454,8 @@
         loadMembers();
     }
 
-    function activityLabel(event) {
-        const labels = {
-            ai_message_generated: "AI message generated",
-            fallback_message_generated: "Standard message generated",
-            message_copied: "Message copied",
-            email_sent: "Email sent",
-            email_failed: "Email failed",
-            action_contacted: "Action marked contacted",
-            action_resolved: "Action resolved",
-            action_snoozed: "Action snoozed",
-            action_reopened: "Action reopened",
-            follow_up_scheduled: "Follow-up scheduled",
-            follow_up_completed: "Follow-up completed",
-            follow_up_cancelled: "Follow-up cancelled"
-        };
-        return labels[event.event_type] || event.event_type.replaceAll("_", " ");
+    function activityPresentation(event) {
+        return window.MyFitActivity.present(event);
     }
 
     function renderDetail() {
@@ -480,11 +471,28 @@
         );
         renderProfileActions();
         renderSummary();
+        renderAttendance();
         renderRetention();
         renderPayments();
         renderBookings();
         renderFollowUps();
         renderActivity();
+    }
+
+    function renderAttendance() {
+        const data = crmData.attendance;
+        const container = document.getElementById("attendance-detail");
+        const trend = !data.has_enough_history ? "Not enough attendance history yet."
+            : data.attendance_declining ? `Declining: ${data.baseline_visits_per_week} previous vs ${data.recent_visits_per_week} recent visits/week (↓ ${data.attendance_change_percent}%).`
+            : "Attendance is stable.";
+        const milestone = data.last_milestone ? `Last milestone: ${data.last_milestone} (${data.milestone_status || "open"}).` : "No attendance milestone reached yet.";
+        const next = data.next_milestone ? `Next milestone: ${data.total_attended} / ${data.next_milestone} — ${data.visits_until_next_milestone} visits to go.` : "All configured milestones reached.";
+        container.replaceChildren(
+            textElement("p", "", `Lifetime Visits: ${data.total_attended}`),
+            textElement("p", "", `Average Visits / Week: ${data.average_visits_per_week}`),
+            textElement("p", "", `Last Visit: ${data.last_visit_at ? formatDate(data.last_visit_at) : "No attended visits yet"}`),
+            textElement("p", "", milestone), textElement("p", "", next), textElement("p", "", trend)
+        );
     }
 
     function renderProfileActions() {
@@ -640,14 +648,27 @@
     }
 
     function renderActivity() {
+        if (!crmData) return;
         const list = document.getElementById("member-activity");
+        const filter = document.getElementById("activity-filter");
         list.replaceChildren();
         if (!crmData.action_history.length) return list.appendChild(textElement("p", "crm-empty", "No activity recorded."));
+        const selected = filter.value;
         crmData.action_history.forEach(event => {
-            const row = document.createElement("div"); row.className = "crm-history-row";
-            row.append(textElement("time", "", formatDate(event.created_at, true)), textElement("strong", "", activityLabel(event)), textElement("span", "", event.action_type));
+            const presentation = activityPresentation(event);
+            if (selected !== "all" && presentation.category !== selected) return;
+            const row = document.createElement("article"); row.className = "crm-activity-row";
+            const timestamp = formatActivityDate(event.created_at);
+            const time = document.createElement("time"); time.dateTime = event.created_at;
+            time.append(textElement("span", "crm-activity-date", timestamp.date), textElement("span", "crm-activity-time", timestamp.time));
+            const content = document.createElement("div"); content.className = "crm-activity-content";
+            content.append(textElement("strong", "crm-activity-title", `${presentation.icon} ${presentation.title}`));
+            if (presentation.description) content.appendChild(textElement("span", "crm-activity-description", presentation.description));
+            const badge = textElement("span", `crm-activity-badge crm-activity-badge-${presentation.category}`, presentation.type);
+            row.append(time, content, badge);
             list.appendChild(row);
         });
+        if (!list.children.length) list.appendChild(textElement("p", "crm-empty", "No activity matches this filter."));
     }
 
     function showState(message, isError = false) {
@@ -769,6 +790,7 @@
     if (page === "members") initMembersPage();
     if (page === "detail") {
         initMessageModal();
+        document.getElementById("activity-filter").addEventListener("change", renderActivity);
         loadDetail().catch(error => {
             console.error("Member detail error:", error);
             showState("Unable to load this member.", true);

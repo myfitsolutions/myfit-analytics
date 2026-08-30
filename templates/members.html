@@ -13,6 +13,7 @@
             <nav class="dashboard-user-area" aria-label="Primary navigation">
                 <a class="settings-button" href="/dashboard">Dashboard</a>
                 <a class="settings-button" href="/members" aria-current="page">Members</a>
+                <a class="settings-button" href="/revenue">Revenue</a>
                 {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Imports</a>{% endif %}
                 <span>{{ user_email }} · {{ user_role | title }}</span>
                 <form method="post" action="/logout"><button class="settings-button" type="submit">Logout</button></form>
