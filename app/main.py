@@ -13,7 +13,7 @@ from sqlalchemy import case, func, text
 
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import engine, get_db
@@ -95,6 +95,44 @@ templates = Jinja2Templates(
 )
 
 
+def _sanitize_database_diagnostic(value):
+    if value is None:
+        return None
+    summary = " ".join(str(value).split())
+    summary = re.sub(
+        r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@:]+:[^\s/@]+@",
+        r"\1[redacted]@",
+        summary,
+    )
+    summary = re.sub(
+        r"(?i)\b(password|passwd|token|secret|api[_-]?key)\s*=\s*[^\s,;]+",
+        r"\1=[redacted]",
+        summary,
+    )
+    return summary[:500]
+
+
+def _programming_error_diagnostics(error):
+    original = getattr(error, "orig", None)
+    diagnostic = getattr(original, "diag", None)
+    values = {
+        "sqlstate": getattr(original, "pgcode", None)
+        or getattr(diagnostic, "sqlstate", None),
+        "message_primary": getattr(diagnostic, "message_primary", None),
+        "table_name": getattr(diagnostic, "table_name", None),
+        "column_name": getattr(diagnostic, "column_name", None),
+        "constraint_name": getattr(diagnostic, "constraint_name", None),
+    }
+    sanitized = {
+        key: _sanitize_database_diagnostic(value)
+        for key, value in values.items()
+        if value is not None
+    }
+    if not sanitized:
+        sanitized["summary"] = type(original).__name__ if original else "ProgrammingError"
+    return sanitized
+
+
 @app.middleware("http")
 async def production_safety_middleware(request: Request, call_next):
     supplied_id = request.headers.get("X-Request-ID", "")
@@ -106,7 +144,17 @@ async def production_safety_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception as error:
-        print(f"Unhandled {type(error).__name__} request_id={request_id}")
+        if isinstance(error, ProgrammingError):
+            diagnostics = json.dumps(
+                _programming_error_diagnostics(error),
+                sort_keys=True,
+            )
+            print(
+                f"Unhandled ProgrammingError request_id={request_id} "
+                f"diagnostics={diagnostics}"
+            )
+        else:
+            print(f"Unhandled {type(error).__name__} request_id={request_id}")
         response = JSONResponse(
             status_code=500,
             content={"detail": "An unexpected error occurred", "request_id": request_id}
