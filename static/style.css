@@ -1880,6 +1880,11 @@ input,select,textarea,.crm-search,.message-subject,.message-textarea {
 input::placeholder,textarea::placeholder { color:var(--text-muted); }select option { background:var(--surface-solid); color:var(--text); }
 .action-history-header select,.crm-activity-header select,.data-source-controls select,.revenue-intelligence-panel select,.team-add-form select,.team-member-controls select { border-color:var(--border); background:var(--app-bg-soft); color:var(--text); }
 .crm-search-label,.message-label,.member-import-form label,.settings-form label { color:var(--text-secondary); }
+.settings-form .settings-grid input,.settings-form .settings-follow-up-label input,.team-add-form input { border-color:var(--border); background:var(--app-bg-soft); color:var(--text); }
+.settings-fieldset { border-color:var(--border); }.settings-fieldset legend,.data-source-settings strong { color:var(--text); }.settings-help,.settings-status,.message-modal-header p,.team-member span { color:var(--text-muted); }
+.settings-status-success { color:var(--success); }.settings-status-error { color:var(--danger); }
+.team-add-form { border-color:var(--border); background:var(--app-bg-soft); }.team-add-form label { color:var(--text-secondary); }
+input:disabled,select:disabled,textarea:disabled,input[readonly],textarea[readonly] { border-color:var(--border); background:var(--surface-elevated); color:var(--text-secondary); -webkit-text-fill-color:var(--text-secondary); opacity:.72; }
 
 .crm-status,.activity-badge,.action-history-badge,.revenue-kind,.revenue-kind-refund { border-width:1px; border-style:solid; border-radius:999px; font-weight:800; letter-spacing:.03em; }
 .crm-status-healthy,.retention-healthy,.status-paid { border-color:color-mix(in srgb,var(--success) 38%,transparent); background:color-mix(in srgb,var(--success) 12%,transparent); color:var(--success); }

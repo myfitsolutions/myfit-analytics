@@ -28,6 +28,19 @@ class UIModernizationTests(unittest.TestCase):
         for fake in ("/leads","/clients","/billing","/workflows","/forecast"):
             self.assertNotIn(fake,script)
 
+    def test_navigation_active_state_tracks_routes_hashes_and_dashboard_scroll(self):
+        script=(ROOT/"static/ui.js").read_text(encoding="utf-8")
+        for route in ('/revenue','/members','/imports'):
+            self.assertIn(f'navItem("{route.strip("/").title()}"',script)
+        for section in ('retention-health','payment-recovery','action-center'):
+            self.assertIn(f'/dashboard#{section}',script)
+        self.assertIn('setActiveNavigation',script)
+        self.assertIn('removeAttribute("aria-current")',script)
+        self.assertIn('window.addEventListener("hashchange",syncNavigationState)',script)
+        self.assertIn('IntersectionObserver',script)
+        self.assertIn('observer.observe(item.section)',script)
+        self.assertIn('closeDrawer',script)
+
     def test_theme_and_mobile_navigation_controls_are_accessible(self):
         script=(ROOT/"static/ui.js").read_text(encoding="utf-8")
         self.assertIn("myfit-analytics-theme",script);self.assertIn('dataset.theme',script)
@@ -92,6 +105,20 @@ class UIModernizationTests(unittest.TestCase):
             self.assertIn(f'.crm-activity-badge-{category}',css)
         self.assertIn('.action-history-date,.crm-activity-date { color:var(--text); }',css)
         self.assertIn('.action-history-time,.crm-activity-time',css)
+
+    def test_studio_settings_modal_uses_theme_aware_form_contract(self):
+        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        for control in ('setting-name','setting-timezone','setting-currency','setting-sender-name','setting-healthy','setting-watch','setting-at-risk','setting-follow-up','setting-primary-platform'):
+            self.assertIn(f'id="{control}"',dashboard)
+        self.assertIn('.settings-form .settings-grid input,.settings-form .settings-follow-up-label input',css)
+        self.assertIn('.settings-fieldset { border-color:var(--border); }',css)
+        self.assertIn('.settings-fieldset legend,.data-source-settings strong { color:var(--text); }',css)
+        self.assertIn('.settings-help,.settings-status,.message-modal-header p,.team-member span { color:var(--text-muted); }',css)
+        self.assertIn('.data-source-controls select',css)
+        self.assertIn('input:disabled,select:disabled,textarea:disabled,input[readonly],textarea[readonly]',css)
+        self.assertIn('-webkit-text-fill-color:var(--text-secondary)',css)
+        self.assertIn('.team-add-form { border-color:var(--border); background:var(--app-bg-soft); }',css)
 
     def test_revenue_import_card_explains_platform_prerequisite(self):
         template=templates.env.get_template("imports.html")
