@@ -1878,6 +1878,7 @@ input,select,textarea,.crm-search,.message-subject,.message-textarea {
     border:1px solid var(--border); border-radius:10px; background:var(--app-bg-soft); color:var(--text); caret-color:var(--blue);
 }
 input::placeholder,textarea::placeholder { color:var(--text-muted); }select option { background:var(--surface-solid); color:var(--text); }
+.action-history-header select,.crm-activity-header select,.data-source-controls select,.revenue-intelligence-panel select,.team-add-form select,.team-member-controls select { border-color:var(--border); background:var(--app-bg-soft); color:var(--text); }
 .crm-search-label,.message-label,.member-import-form label,.settings-form label { color:var(--text-secondary); }
 
 .crm-status,.activity-badge,.action-history-badge,.revenue-kind,.revenue-kind-refund { border-width:1px; border-style:solid; border-radius:999px; font-weight:800; letter-spacing:.03em; }
@@ -1889,7 +1890,13 @@ input::placeholder,textarea::placeholder { color:var(--text-muted); }select opti
 
 .action-item { border:1px solid var(--border); border-radius:var(--radius-md); background:linear-gradient(120deg,var(--surface-elevated),transparent); padding:18px; }
 .action-summary-card,.retention-stat,.recovery-stat,.revenue-kpis>div { border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-elevated); }
-.action-item-title,.action-history-title { color:var(--text); }.action-item-description,.action-item-meta,.action-history-description { color:var(--text-muted); }
+.action-item-title,.action-history-title,.crm-activity-title,.action-history-date,.crm-activity-date { color:var(--text); }.action-item-description,.action-item-meta,.action-history-description,.crm-activity-description,.action-history-time,.crm-activity-time,.action-history-member,.action-history-state,.action-history-header p { color:var(--text-muted); }
+.crm-activity-badge { border-color:var(--border); background:var(--surface-elevated); color:var(--text-secondary); }
+.crm-activity-badge-milestone { border-color:color-mix(in srgb,var(--purple) 38%,transparent); background:color-mix(in srgb,var(--purple) 12%,transparent); color:var(--purple); }
+.crm-activity-badge-payment { border-color:color-mix(in srgb,var(--blue) 38%,transparent); background:color-mix(in srgb,var(--blue) 12%,transparent); color:var(--blue); }
+.crm-activity-badge-retention { border-color:color-mix(in srgb,var(--success) 38%,transparent); background:color-mix(in srgb,var(--success) 12%,transparent); color:var(--success); }
+.crm-activity-badge-attendance { border-color:color-mix(in srgb,var(--warning) 38%,transparent); background:color-mix(in srgb,var(--warning) 12%,transparent); color:var(--warning); }
+.crm-activity-badge-follow_up { border-color:var(--border); background:var(--surface-elevated); color:var(--text-secondary); }
 
 .payment-table,.revenue-data-table { border-collapse:separate; border-spacing:0; }.payment-table th,.revenue-data-table th,.crm-activity-columns,.action-history-columns { background:var(--app-bg-soft); color:var(--text-muted); }.payment-table td,.payment-table th,.revenue-data-table td,.revenue-data-table th { border-color:var(--border); }.revenue-data-table tbody tr,.payment-table tbody tr { transition:background .16s ease; }.revenue-data-table tbody tr:hover,.payment-table tbody tr:hover { background:color-mix(in srgb,var(--surface-hover) 72%,transparent); }
 .revenue-list-row,.crm-activity-row,.action-history-item { border-color:var(--border); }.revenue-list-header { color:var(--text-muted); }

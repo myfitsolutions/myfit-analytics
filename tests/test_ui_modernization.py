@@ -78,6 +78,21 @@ class UIModernizationTests(unittest.TestCase):
         self.assertIn('background: var(--surface-elevated)',css)
         self.assertNotIn('background: #eeeeee',css)
 
+    def test_action_history_controls_and_activity_badges_use_theme_tokens(self):
+        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        member_detail=(ROOT/"templates/member_detail.html").read_text(encoding="utf-8")
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        self.assertIn('id="action-history-filter"',dashboard)
+        self.assertIn('id="activity-filter"',member_detail)
+        self.assertIn('.action-history-header select,.crm-activity-header select',css)
+        self.assertIn('.team-add-form select,.team-member-controls select',css)
+        self.assertIn('background:var(--app-bg-soft); color:var(--text)',css)
+        self.assertIn('select option { background:var(--surface-solid); color:var(--text); }',css)
+        for category in ('milestone','payment','retention','attendance','follow_up'):
+            self.assertIn(f'.crm-activity-badge-{category}',css)
+        self.assertIn('.action-history-date,.crm-activity-date { color:var(--text); }',css)
+        self.assertIn('.action-history-time,.crm-activity-time',css)
+
     def test_revenue_import_card_explains_platform_prerequisite(self):
         template=templates.env.get_template("imports.html")
         context={"studio_id":1,"studio_name":"Test","user_email":"owner@test","user_role":"owner"}
