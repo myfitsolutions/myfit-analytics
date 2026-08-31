@@ -15,6 +15,7 @@ from app.database import Base  # noqa: E402
 from app.main import (  # noqa: E402
     ActionStatusUpdate,
     get_analytics_overview,
+    get_action_center,
     get_member_crm_detail,
     get_monthly_analytics,
     get_payment_recovery,
@@ -22,6 +23,7 @@ from app.main import (  # noqa: E402
     update_action_status,
 )
 from app.models import (  # noqa: E402
+    Booking,
     ImportBatch,
     Member,
     Payment,
@@ -253,6 +255,20 @@ class StudioIntelligenceTests(unittest.TestCase):
         self.assertEqual(trust["datasets"]["revenue"]["record_count"], 1)
         self.assertEqual(trust["datasets"]["members"]["record_count"], 1)
         self.assertEqual(recovery["failed_payment_count"], 0)
+
+    def test_action_center_count_represents_actions_not_unique_members(self):
+        now = datetime.now(timezone.utc)
+        self.db.add_all([
+            Booking(studio_id=1, member_id=1, class_name="First Class", booking_date=now, status="attended"),
+            Payment(studio_id=1, member_id=1, amount=5000, status="failed", payment_date=now),
+        ])
+        self.db.commit()
+        result = get_action_center(1, self.user, self.db)
+        self.assertEqual(result["action_count"], len(result["actions"]))
+        self.assertEqual(result["summary"]["total_actions"], len(result["actions"]))
+        self.assertEqual(len({action["member_id"] for action in result["actions"]}), 1)
+        self.assertGreaterEqual(result["action_count"], 2)
+        self.assertEqual(result["summary"]["celebrations"], 1)
 
 
 if __name__ == "__main__":

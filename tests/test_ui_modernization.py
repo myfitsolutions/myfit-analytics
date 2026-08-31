@@ -54,5 +54,31 @@ class UIModernizationTests(unittest.TestCase):
         self.assertIn("/static",static_routes)
         self.assertTrue((ROOT/"static/revenue.js").exists());self.assertTrue((ROOT/"static/member_crm.js").exists());self.assertTrue((ROOT/"static/import_history.js").exists())
 
+    def test_production_polish_rendering_contracts(self):
+        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        revenue_js=(ROOT/"static/revenue.js").read_text(encoding="utf-8")
+        self.assertIn('data-trust-metadata',dashboard)
+        self.assertIn('retention-member-identity',dashboard)
+        self.assertIn('payment.member_name',dashboard)
+        self.assertIn('action item',dashboard)
+        self.assertNotIn('${data.action_count} ${memberLabel} need attention',dashboard)
+        self.assertIn('.dashboard-member-link { color:var(--text); }',css)
+        self.assertIn('gross_revenue_available',revenue_js)
+        self.assertIn('"Not available"',revenue_js)
+
+    def test_revenue_import_card_explains_platform_prerequisite(self):
+        template=templates.env.get_template("imports.html")
+        context={"studio_id":1,"studio_name":"Test","user_email":"owner@test","user_role":"owner"}
+        for platform in (None,"bsport","other"):
+            rendered=template.render(**context,primary_platform=platform)
+            self.assertIn("requires Hapana as the Primary Platform",rendered)
+            self.assertIn("Revenue import unavailable",rendered)
+            self.assertNotIn('data-import-type="revenue"',rendered)
+        rendered=template.render(**context,primary_platform="hapana")
+        self.assertIn('data-import-type="revenue"',rendered)
+        self.assertIn("Import Revenue",rendered)
+        self.assertNotIn("Revenue import unavailable",rendered)
+
 
 if __name__=="__main__": unittest.main()

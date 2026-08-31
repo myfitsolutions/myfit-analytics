@@ -41,7 +41,16 @@ class RevenueWorkspaceTests(unittest.TestCase):
 
     def test_no_revenue_is_unavailable_and_defaults_are_explicit(self):
         result=get_revenue_analytics(1,"this_month",None,None,self.user,self.db)
-        self.assertFalse(result["available"]);self.assertEqual(result["selected_range"],"this_month");self.assertEqual(result["summary"]["transactions"],0);self.assertEqual(result["summary"]["average_net_transaction"],0)
+        self.assertFalse(result["available"]);self.assertEqual(result["selected_range"],"this_month");self.assertEqual(result["summary"]["transactions"],0);self.assertEqual(result["summary"]["average_net_transaction"],0);self.assertFalse(result["summary"]["gross_revenue_available"])
+
+    def test_missing_gross_revenue_is_unavailable_not_zero(self):
+        now=datetime.now(timezone.utc)
+        self.db.add(RevenueTransaction(studio_id=1,studio_data_source_id=self.source.id,identity_key="net-only",analytics_date=now,transaction_kind="revenue",gross_revenue=Decimal("0"),net_revenue=Decimal("25.00")))
+        self.db.commit()
+        result=get_revenue_analytics(1,"last_7_days",None,None,self.user,self.db)
+        self.assertEqual(result["summary"]["net_revenue"],Decimal("25.00"))
+        self.assertIsNone(result["summary"]["gross_revenue"])
+        self.assertFalse(result["summary"]["gross_revenue_available"])
 
     def test_ranges_custom_validation_and_studio_timezone(self):
         start,end=revenue_date_bounds(self.studio,"last_7_days");self.assertEqual((end-start).days,7)
@@ -58,7 +67,7 @@ class RevenueWorkspaceTests(unittest.TestCase):
         result=get_revenue_analytics(1,"last_7_days",None,None,self.user,self.db);summary=result["summary"]
         self.assertTrue(result["available"]);self.assertEqual((summary["net_revenue"],summary["gross_revenue"],summary["transactions"]),(Decimal("10.00"),Decimal("12.00"),3))
         self.assertEqual((summary["refund_count"],summary["refund_value"],summary["discounts"]),(1,Decimal("10.00"),Decimal("3.00")));self.assertEqual(summary["average_net_transaction"],Decimal("10.00")/3)
-        self.assertEqual(result["refund_summary"],{"count":1,"net_value":Decimal("10.00"),"gross_value":Decimal("12.00")});self.assertEqual(result["freshness"]["source"],"Hapana")
+        self.assertEqual(result["refund_summary"],{"count":1,"net_value":Decimal("10.00"),"gross_value":Decimal("12.00"),"gross_value_available":True});self.assertEqual(result["freshness"]["source"],"Hapana")
         self.assertEqual(sum(row["transactions"] for row in result["by_revenue_type"]),3);self.assertEqual(len(result["recent_refunds"]),1)
 
     def test_pagination_order_filters_search_and_customer_display(self):

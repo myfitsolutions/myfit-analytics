@@ -3818,6 +3818,7 @@ def get_revenue_analytics(
         func.coalesce(func.sum(RevenueTransaction.net_revenue), 0).label("net"),
         func.coalesce(func.sum(RevenueTransaction.gross_revenue), 0).label("gross"),
         func.count(RevenueTransaction.id).label("transactions"),
+        func.coalesce(func.sum(case((RevenueTransaction.gross_revenue != 0, 1), else_=0)), 0).label("gross_values"),
         func.coalesce(func.sum(case((RevenueTransaction.transaction_kind == "refund", -RevenueTransaction.net_revenue), else_=0)), 0).label("refund_value"),
         func.sum(case((RevenueTransaction.transaction_kind == "refund", 1), else_=0)).label("refund_count"),
         func.coalesce(func.sum(RevenueTransaction.discount), 0).label("discounts"),
@@ -3833,9 +3834,12 @@ def get_revenue_analytics(
     ).filter(*base, RevenueTransaction.transaction_kind == "refund").order_by(
         RevenueTransaction.analytics_date.desc(), RevenueTransaction.id.desc()
     ).limit(10).all()
-    refund_gross = db.query(func.coalesce(func.sum(RevenueTransaction.gross_revenue), 0)).filter(
+    refund_gross, refund_count_with_gross = db.query(
+        func.coalesce(func.sum(RevenueTransaction.gross_revenue), 0),
+        func.coalesce(func.sum(case((RevenueTransaction.gross_revenue != 0, 1), else_=0)), 0),
+    ).filter(
         *base, RevenueTransaction.transaction_kind == "refund"
-    ).scalar()
+    ).one()
     latest_batch = db.query(ImportBatch, StudioDataSource).outerjoin(
         StudioDataSource,
         (StudioDataSource.id == ImportBatch.studio_data_source_id) & (StudioDataSource.studio_id == studio_id)
@@ -3853,11 +3857,11 @@ def get_revenue_analytics(
     return {
         "available": get_dataset_availability(db, studio_id)["revenue"],
         "selected_range": range, "range": {"start": start_at, "end": end_at},
-        "summary": {"net_revenue": totals.net, "gross_revenue": totals.gross, "transactions": totals.transactions, "refund_value": totals.refund_value, "refund_count": totals.refund_count or 0, "discounts": totals.discounts, "average_net_transaction": totals.net / totals.transactions if totals.transactions else 0},
+        "summary": {"net_revenue": totals.net, "gross_revenue": totals.gross if totals.transactions and totals.gross_values == totals.transactions else None, "gross_revenue_available": bool(totals.transactions and totals.gross_values == totals.transactions), "transactions": totals.transactions, "refund_value": totals.refund_value, "refund_count": totals.refund_count or 0, "discounts": totals.discounts, "average_net_transaction": totals.net / totals.transactions if totals.transactions else 0},
         "trend": [{"date": row.date, "net_revenue": row.net or 0} for row in trend_rows],
         "by_revenue_type": revenue_types, "top_products": grouped(RevenueTransaction.description, 10),
         "by_payment_method": payment_methods,
-        "refund_summary": {"count": totals.refund_count or 0, "net_value": totals.refund_value, "gross_value": abs(refund_gross or Decimal("0"))},
+        "refund_summary": {"count": totals.refund_count or 0, "net_value": totals.refund_value, "gross_value": abs(refund_gross) if totals.refund_count and refund_count_with_gross == totals.refund_count else None, "gross_value_available": bool(totals.refund_count and refund_count_with_gross == totals.refund_count)},
         "recent_refunds": [serialize_revenue_transaction(transaction, member) for transaction, member in refund_rows],
         "freshness": {"last_imported_at": latest_batch[0].created_at if latest_batch else None, "source": latest_batch[1].display_name if latest_batch and latest_batch[1] else None},
     }
@@ -3870,7 +3874,9 @@ def serialize_revenue_transaction(transaction, member=None):
         "member_id": member.id if member else None, "revenue_type": transaction.revenue_type or "Uncategorized",
         "description": transaction.description or "—", "payment_method": transaction.payment_method or "Unknown",
         "kind": "Refund" if transaction.transaction_kind == "refund" else "Revenue",
-        "gross_revenue": transaction.gross_revenue, "net_revenue": transaction.net_revenue,
+        "gross_revenue": transaction.gross_revenue if transaction.gross_revenue != 0 else None,
+        "gross_revenue_available": transaction.gross_revenue != 0,
+        "net_revenue": transaction.net_revenue,
     }
 
 

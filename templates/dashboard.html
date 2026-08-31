@@ -529,7 +529,7 @@
                 const data=await response.json(), summary=data.summary, kpis=document.getElementById("revenue-kpis");kpis.replaceChildren();
                 document.getElementById("revenue-upload-link").hidden=data.available || !["owner","manager"].includes(CURRENT_USER_ROLE);
                 if(!data.available){state.textContent="Revenue data not imported yet.";state.className="settings-status";return;}
-                [["Net Revenue",formatCurrency(summary.net_revenue)],["Gross Revenue",formatCurrency(summary.gross_revenue)],["Transactions",summary.transactions],["Refunds",`${formatCurrency(summary.refund_value)} · ${summary.refund_count}`]].forEach(([label,value])=>{const card=document.createElement("div");card.append(actionHistoryText("span","",label),actionHistoryText("strong","",String(value)));kpis.appendChild(card);});state.textContent=summary.transactions?"":"No revenue transactions found for this period.";state.className="settings-status";
+                [["Net Revenue",formatCurrency(summary.net_revenue)],["Gross Revenue",summary.gross_revenue_available?formatCurrency(summary.gross_revenue):"Not available"],["Transactions",summary.transactions],["Refunds",`${formatCurrency(summary.refund_value)} · ${summary.refund_count}`]].forEach(([label,value])=>{const card=document.createElement("div");card.append(actionHistoryText("span","",label),actionHistoryText("strong","",String(value)));kpis.appendChild(card);});state.textContent=summary.transactions?"":"No revenue transactions found for this period.";state.className="settings-status";
             } catch(error){state.textContent="Revenue analytics are temporarily unavailable.";state.className="settings-status settings-status-error";}
         }
 
@@ -596,12 +596,22 @@
             Object.entries(trust.datasets).forEach(([key, dataset]) => {
                 const item = document.createElement("article");
                 item.className = `data-trust-item${dataset.available ? " data-trust-available" : ""}`;
+                const metadata = document.createElement("dl");
+                metadata.className = "data-trust-metadata";
+                const detail = (term, value) => {
+                    const row = document.createElement("div");
+                    row.append(actionHistoryText("dt", "", term), actionHistoryText("dd", "", value));
+                    return row;
+                };
+                metadata.append(
+                    detail("Last imported", dataset.last_imported_at ? formatDataSourceDate(dataset.last_imported_at) : "No successful import recorded"),
+                    detail("Source", dataset.source || trust.platform_name || "Not attributed")
+                );
                 item.append(
-                    actionHistoryText("strong", "", labels[key]),
-                    actionHistoryText("span", "", dataset.available ? `Available · ${dataset.record_count} records` : "No data imported"),
-                    actionHistoryText("small", "", dataset.last_imported_at
-                        ? `Last imported ${formatDataSourceDate(dataset.last_imported_at)}${dataset.source ? ` · ${dataset.source}` : ""}`
-                        : "No successful import recorded")
+                    actionHistoryText("h3", "data-trust-name", labels[key]),
+                    actionHistoryText("p", "data-trust-status", dataset.available ? "Available" : "Not available"),
+                    actionHistoryText("p", "data-trust-count", dataset.available ? `${dataset.record_count} records` : "No data imported"),
+                    metadata
                 );
                 trustGrid.appendChild(item);
             });
@@ -1173,6 +1183,7 @@
 
 
             const memberInfo = document.createElement("div");
+            memberInfo.className = "retention-member-identity";
             const memberLink = document.createElement("a");
             memberLink.className = "dashboard-member-link";
             memberLink.href = `/members/${member.id}`;
@@ -1966,7 +1977,7 @@
             if (!matching.length) {
                 const emptyState = document.createElement("p");
                 emptyState.className = "action-center-state";
-                emptyState.textContent = actionCenterActions.length ? "No actions match this filter." : "No members need attention right now.";
+                emptyState.textContent = actionCenterActions.length ? "No actions match this filter." : "No action items right now.";
                 list.appendChild(emptyState);
             }
             document.querySelectorAll("#action-center-filters button").forEach(button => {
@@ -1988,9 +1999,8 @@
                 }
 
                 const data = await response.json();
-                const memberLabel = data.action_count === 1 ? "member" : "members";
-                count.textContent =
-                    `${data.action_count} ${memberLabel} need attention`;
+                const actionLabel = data.action_count === 1 ? "action item" : "action items";
+                count.textContent = `${data.action_count} ${actionLabel}`;
                 const summary = document.getElementById("action-center-summary");
                 summary.replaceChildren();
                 [["Total Actions", data.summary.total_actions], ["Urgent", data.summary.urgent], ["Needs Attention", data.summary.needs_attention], ["Celebrations", data.summary.celebrations], ["Follow-Ups Due", data.summary.due_follow_ups]].forEach(([label, value]) => {
