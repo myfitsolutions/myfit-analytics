@@ -1903,6 +1903,11 @@ input::placeholder,textarea::placeholder { color:var(--text-muted); }select opti
 
 ::-webkit-scrollbar { width:10px; height:10px; }::-webkit-scrollbar-track { background:var(--app-bg-soft); }::-webkit-scrollbar-thumb { border:2px solid var(--app-bg-soft); border-radius:999px; background:color-mix(in srgb,var(--text-muted) 50%,transparent); }
 
+.data-trust-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.data-trust-item { display:grid; gap:5px; min-width:0; padding:14px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--app-bg-soft); }
+.data-trust-item strong { color:var(--text); }.data-trust-item span,.data-trust-item small { color:var(--text-muted); }
+.data-trust-item.data-trust-available { border-color:color-mix(in srgb,var(--success) 38%,var(--border)); }.data-trust-item.data-trust-available span { color:var(--success); }
+
 @media (max-width: 1060px) {
     .app-shell-enabled .dashboard { margin-left:0; padding:24px 22px 48px; }
     .app-sidebar { width:min(290px,84vw); transform:translateX(-105%); transition:transform .2s ease; }
@@ -1910,12 +1915,14 @@ input::placeholder,textarea::placeholder { color:var(--text-muted); }select opti
     .mobile-nav-toggle { display:grid; flex:0 0 42px; height:42px; place-items:center; border:1px solid var(--border); border-radius:11px; background:var(--surface); color:var(--text); cursor:pointer; }
     .app-sidebar-backdrop { position:fixed; inset:0; z-index:70; border:0; background:rgba(3,6,17,.58); backdrop-filter:blur(4px); }.nav-open .app-sidebar-backdrop { display:block; }
     .revenue-workspace-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .data-trust-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 
 @media (max-width: 680px) {
     .app-shell-enabled .dashboard { padding:18px 14px 38px; }
     .dashboard-header { align-items:flex-start; flex-direction:row; flex-wrap:wrap; gap:12px; }.mobile-nav-toggle { width:42px; }.dashboard-header>div:first-of-type { flex:1; }.dashboard-user-area { width:100%; flex-basis:100%; justify-content:flex-start; }.dashboard-user-area>span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .panel,.card { padding:18px; border-radius:15px; }.cards,.crm-summary-cards,.revenue-workspace-kpis,.revenue-snapshot-panel .revenue-kpis { grid-template-columns:1fr; }
+    .data-trust-grid { grid-template-columns:1fr; }
     .crm-title,.crm-profile-header,.payment-recovery-header { align-items:flex-start; flex-direction:column; }.crm-import-actions { justify-content:flex-start; width:100%; }.crm-import-actions>* { flex:1; text-align:center; }
     .revenue-range-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }.revenue-range-controls button { width:100%; }.revenue-custom-range { align-items:stretch; flex-direction:column; }
     .revenue-pagination { flex-wrap:wrap; }.message-modal { border-radius:18px 18px 0 0; }

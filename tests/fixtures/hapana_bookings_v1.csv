@@ -1,0 +1,8 @@
+Email Address,Class,Start Date,Attendance Status,Location,Instructor
+hana.healthy@example.test,Reformer Flow,2026-08-26T09:00:00+08:00,Completed,Central,Coach A
+hana.healthy@example.test,Reformer Flow,2026-08-26T09:00:00+08:00,Completed,Central,Coach A
+felix.finance@example.test,Strength,2026-08-27T10:00:00+08:00,No Show,Central,Coach B
+missing.member@example.test,Yoga,2026-08-27T11:00:00+08:00,Completed,Central,Coach C
+hana.healthy@example.test,Pilates,not-a-date,Completed,Central,Coach A
+hana.healthy@example.test,Yoga,2026-08-28T09:00:00+08:00,Reserved,Central,Coach C
+hana.healthy@example.test,Mobility,2026-08-29T09:00:00+08:00,Cancelled,Central,Coach C

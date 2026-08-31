@@ -596,10 +596,15 @@
 
     function renderPayments() {
         const summary = crmData.payment_summary;
-        document.getElementById("payment-summary").replaceChildren(
+        const details = document.getElementById("payment-summary");
+        details.replaceChildren(
             textElement("p", "", `Total Paid: ${formatCurrency(summary.total_paid, crmData.studio.currency)}`),
             textElement("p", "", `Failed Payments: ${summary.failed_count}`),
-            textElement("p", "", `Amount to Recover: ${formatCurrency(summary.failed_amount, crmData.studio.currency)}`)
+            textElement("p", "", `Failed Amount: ${formatCurrency(summary.failed_amount, crmData.studio.currency)}`),
+            textElement("p", "", `Recovery workflow: ${summary.workflow_status === "resolved" ? "Resolved operationally" : summary.workflow_status}`)
+        );
+        if (summary.later_matching_payment) details.appendChild(
+            textElement("p", "", "Later matching successful payment recorded; recovery is not automatically confirmed.")
         );
         const list = document.getElementById("payment-history");
         list.replaceChildren();

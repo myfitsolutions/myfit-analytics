@@ -9,7 +9,7 @@ from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from sqlalchemy import case, func, text
+from sqlalchemy import case, exists, func, text
 
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal
@@ -46,7 +46,7 @@ from dateutil.relativedelta import relativedelta
 
 from app.services.email_service import EmailServiceError, send_email
 from app.services.attendance import ATTENDANCE_MILESTONES, get_attendance_aggregates, get_attendance_milestone, calculate_attendance_decline, format_ordinal
-from app.services.data_sources import get_dataset_availability, get_primary_data_source, serialize_data_source, set_primary_platform
+from app.services.data_sources import get_data_trust_summary, get_dataset_availability, get_primary_data_source, serialize_data_source, set_primary_platform
 from app.platforms import PLATFORMS, get_import_profile
 from app.services.revenue import normalize_revenue_row, parse_revenue_date
 from app.auth import (
@@ -600,12 +600,51 @@ def get_studio_members(
 
     return members
 
+
+def get_financial_revenue_source(db, studio_id):
+    has_transactions = db.query(
+        exists().where(RevenueTransaction.studio_id == studio_id)
+    ).scalar()
+    if has_transactions:
+        return "revenue_transactions"
+    has_paid_payments = db.query(
+        exists().where(
+            Payment.studio_id == studio_id,
+            Payment.status == "paid",
+        )
+    ).scalar()
+    return "legacy_payments" if has_paid_payments else None
+
+
+def get_financial_revenue_total(db, studio_id, source, start_at=None, end_at=None):
+    if source == "revenue_transactions":
+        query = db.query(func.coalesce(func.sum(RevenueTransaction.net_revenue), 0)).filter(
+            RevenueTransaction.studio_id == studio_id
+        )
+        date_column = RevenueTransaction.analytics_date
+        divisor = Decimal("1")
+    elif source == "legacy_payments":
+        query = db.query(func.coalesce(func.sum(Payment.amount), 0)).filter(
+            Payment.studio_id == studio_id,
+            Payment.status == "paid",
+        )
+        date_column = Payment.payment_date
+        divisor = Decimal("100")
+    else:
+        return None
+    if start_at is not None:
+        query = query.filter(date_column >= start_at)
+    if end_at is not None:
+        query = query.filter(date_column < end_at)
+    return Decimal(query.scalar() or 0) / divisor
+
 @app.get("/studios/{studio_id}/analytics/overview")
 def get_analytics_overview(
     studio_id: int,
     authorized_user: User = Depends(require_studio_user),
     db: Session = Depends(get_db)
 ):
+    availability = get_dataset_availability(db, studio_id)
     # -------------------------
     # MEMBER ANALYTICS
     # -------------------------
@@ -658,18 +697,17 @@ def get_analytics_overview(
 
     successful_payments = len(paid_payments)
 
-    total_revenue_centavos = sum(
-        payment.amount for payment in paid_payments
+    financial_revenue_source = get_financial_revenue_source(db, studio_id)
+    total_revenue = get_financial_revenue_total(
+        db, studio_id, financial_revenue_source
     )
 
-    total_revenue = total_revenue_centavos / 100
-
-    if active_members > 0:
+    if active_members > 0 and total_revenue is not None:
         average_revenue_per_active_member = (
             total_revenue / active_members
         )
     else:
-        average_revenue_per_active_member = 0
+        average_revenue_per_active_member = None
 
     # -------------------------
     # BOOKING ANALYTICS
@@ -721,15 +759,19 @@ def get_analytics_overview(
 
     return {
         "studio_id": studio_id,
+        "availability": availability,
         "total_members": total_members,
         "active_members": active_members,
         "inactive_members": inactive_members,
         "total_revenue": total_revenue,
+        "financial_revenue_available": financial_revenue_source is not None,
+        "financial_revenue_source": financial_revenue_source,
         "successful_payments": successful_payments,
         "failed_payments": failed_payments,
-        "average_revenue_per_active_member": round(
-            average_revenue_per_active_member,
-            2
+        "average_revenue_per_active_member": (
+            round(average_revenue_per_active_member, 2)
+            if average_revenue_per_active_member is not None
+            else None
         ),
         "total_bookings": total_bookings,
         "attended_bookings": attended_bookings,
@@ -754,7 +796,10 @@ def dashboard(
     has_data = any((
         db.query(Member.id).filter(Member.studio_id == studio.id).first(),
         db.query(Booking.id).filter(Booking.studio_id == studio.id).first(),
-        db.query(Payment.id).filter(Payment.studio_id == studio.id).first()
+        db.query(Payment.id).filter(Payment.studio_id == studio.id).first(),
+        db.query(RevenueTransaction.id).filter(
+            RevenueTransaction.studio_id == studio.id
+        ).first(),
     ))
 
     return templates.TemplateResponse(
@@ -2552,7 +2597,9 @@ def build_data_source_status(db, studio_id):
         func.max(ImportBatch.created_at).label("last_import_at")
     ).filter(
         ImportBatch.studio_id == studio_id,
-        ImportBatch.studio_data_source_id.is_not(None)
+        ImportBatch.studio_data_source_id.is_not(None),
+        ImportBatch.status == "completed",
+        ImportBatch.imported_count > 0,
     ).group_by(ImportBatch.studio_data_source_id).all()
     last_import_by_source = {row.studio_data_source_id: row.last_import_at for row in last_import_rows}
     serialized = []
@@ -2566,6 +2613,7 @@ def build_data_source_status(db, studio_id):
         "primary_source": primary,
         "sources": serialized,
         "availability": get_dataset_availability(db, studio_id),
+        "data_trust": get_data_trust_summary(db, studio_id),
         "platforms": [
             {"key": key, **definition}
             for key, definition in PLATFORMS.items()
@@ -3565,23 +3613,13 @@ def get_monthly_analytics(
     db: Session = Depends(get_db)
 ):
     now = datetime.now(timezone.utc)
-
-    current_month_start = datetime(
-        now.year,
-        now.month,
-        1,
-        tzinfo=timezone.utc
+    studio = get_studio(db, studio_id)
+    availability = get_dataset_availability(db, studio_id)
+    current_month_start, next_month_start = revenue_date_bounds(
+        studio, "this_month"
     )
-
-    next_month_start = (
-        current_month_start
-        + relativedelta(months=1)
-    )
-
-    last_month_start = (
-        current_month_start
-        - relativedelta(months=1)
-    )
+    last_month_start, _ = revenue_date_bounds(studio, "previous_month")
+    financial_revenue_source = get_financial_revenue_source(db, studio_id)
 
     # CURRENT MONTH PAYMENTS
     current_payments = (
@@ -3595,11 +3633,13 @@ def get_monthly_analytics(
         .all()
     )
 
-    current_revenue_centavos = sum(
-        payment.amount for payment in current_payments
+    current_revenue = get_financial_revenue_total(
+        db,
+        studio_id,
+        financial_revenue_source,
+        current_month_start,
+        next_month_start,
     )
-
-    current_revenue = current_revenue_centavos / 100
 
     # LAST MONTH PAYMENTS
     last_month_payments = (
@@ -3613,16 +3653,16 @@ def get_monthly_analytics(
         .all()
     )
 
-    last_month_revenue_centavos = sum(
-        payment.amount for payment in last_month_payments
-    )
-
-    last_month_revenue = (
-        last_month_revenue_centavos / 100
+    last_month_revenue = get_financial_revenue_total(
+        db,
+        studio_id,
+        financial_revenue_source,
+        last_month_start,
+        current_month_start,
     )
 
     # REVENUE CHANGE
-    if last_month_revenue > 0:
+    if last_month_revenue is not None and last_month_revenue > 0:
         revenue_change_percent = (
             (
                 current_revenue
@@ -3670,8 +3710,11 @@ def get_monthly_analytics(
 
     return {
         "studio_id": studio_id,
+        "availability": availability,
         "year": now.year,
         "month": now.month,
+        "financial_revenue_available": financial_revenue_source is not None,
+        "financial_revenue_source": financial_revenue_source,
 
         "current_month": {
             "revenue": current_revenue,
@@ -3709,46 +3752,38 @@ def get_revenue_trend(
     db: Session = Depends(get_db)
 ):
     now = datetime.now(timezone.utc)
+    studio = get_studio(db, studio_id)
+    zone = ZoneInfo(studio.timezone)
+    local_now = now.astimezone(zone)
+    financial_revenue_source = get_financial_revenue_source(db, studio_id)
 
     results = []
 
     for months_ago in range(5, -1, -1):
 
-        month_start = (
+        local_month_start = (
             datetime(
-                now.year,
-                now.month,
+                local_now.year,
+                local_now.month,
                 1,
-                tzinfo=timezone.utc
+                tzinfo=zone
             )
             - relativedelta(months=months_ago)
         )
-
-        next_month_start = (
-            month_start
-            + relativedelta(months=1)
+        month_start = local_month_start.astimezone(timezone.utc)
+        next_month_start = (local_month_start + relativedelta(months=1)).astimezone(timezone.utc)
+        revenue = get_financial_revenue_total(
+            db,
+            studio_id,
+            financial_revenue_source,
+            month_start,
+            next_month_start,
         )
-
-        payments = (
-            db.query(Payment)
-            .filter(
-                Payment.studio_id == studio_id,
-                Payment.status == "paid",
-                Payment.payment_date >= month_start,
-                Payment.payment_date < next_month_start
-            )
-            .all()
-        )
-
-        revenue_centavos = sum(
-            payment.amount for payment in payments
-        )
-
-        revenue = revenue_centavos / 100
 
         results.append({
-            "month": month_start.strftime("%b %Y"),
-            "revenue": revenue
+            "month": local_month_start.strftime("%b %Y"),
+            "revenue": revenue,
+            "financial_revenue_source": financial_revenue_source,
         })
 
     return results
@@ -4131,6 +4166,27 @@ def get_member_crm_detail(
         .limit(20)
         .all()
     )
+    failed_payment_records = (
+        db.query(Payment)
+        .filter(
+            Payment.studio_id == studio.id,
+            Payment.member_id == member.id,
+            Payment.status == "failed",
+        )
+        .all()
+    )
+    later_matching_payment = any(
+        db.query(
+            exists().where(
+                Payment.studio_id == studio.id,
+                Payment.member_id == member.id,
+                Payment.status == "paid",
+                Payment.amount == failed.amount,
+                Payment.payment_date > failed.payment_date,
+            )
+        ).scalar()
+        for failed in failed_payment_records
+    )
     status_records = (
         db.query(ActionStatus)
         .filter(
@@ -4205,7 +4261,10 @@ def get_member_crm_detail(
         "payment_summary": {
             "total_paid": (payment_summary_row.total_paid or 0) / 100,
             "failed_count": payment_summary_row.failed_count or 0,
-            "failed_amount": (payment_summary_row.failed_amount or 0) / 100
+            "failed_amount": (payment_summary_row.failed_amount or 0) / 100,
+            "workflow_status": status_by_type.get("payment", "open"),
+            "later_matching_payment": later_matching_payment,
+            "recovery_confirmed": False,
         },
         "recent_payments": [
             {
@@ -4258,6 +4317,7 @@ def get_retention_health(
     db: Session = Depends(get_db)
 ):
     studio = get_studio(db, studio_id)
+    availability = get_dataset_availability(db, studio_id)
     active_members = (
         db.query(Member)
         .filter(
@@ -4300,6 +4360,7 @@ def get_retention_health(
 
     return {
         "studio_id": studio_id,
+        "availability": availability,
         "summary": summary,
         "members": results
     } 
@@ -4516,7 +4577,8 @@ def get_payment_recovery(
     )
 
     results = []
-    total_failed_centavos = 0
+    total_attention_centavos = 0
+    action_statuses = get_action_status_map(db, studio_id)
 
     for payment in failed_payments:
 
@@ -4529,7 +4591,20 @@ def get_payment_recovery(
             .first()
         )
 
-        total_failed_centavos += payment.amount
+        workflow_status, snooze_until = get_effective_action_status(
+            action_statuses.get((payment.member_id, "payment"))
+        )
+        later_matching_payment = db.query(
+            exists().where(
+                Payment.studio_id == studio_id,
+                Payment.member_id == payment.member_id,
+                Payment.status == "paid",
+                Payment.amount == payment.amount,
+                Payment.payment_date > payment.payment_date,
+            )
+        ).scalar()
+        if workflow_status != "resolved":
+            total_attention_centavos += payment.amount
 
         results.append({
             "payment_id": payment.id,
@@ -4545,12 +4620,22 @@ def get_payment_recovery(
                 else None
             ),
             "amount": payment.amount / 100,
-            "failed_at": payment.payment_date
+            "failed_at": payment.payment_date,
+            "workflow_status": workflow_status,
+            "snooze_until": snooze_until,
+            "later_matching_payment": bool(later_matching_payment),
+            "recovery_confirmed": False,
         })
 
     return {
         "studio_id": studio_id,
         "failed_payment_count": len(results),
-        "revenue_to_recover": total_failed_centavos / 100,
+        "needs_attention_count": sum(
+            payment["workflow_status"] != "resolved" for payment in results
+        ),
+        "resolved_count": sum(
+            payment["workflow_status"] == "resolved" for payment in results
+        ),
+        "revenue_to_recover": total_attention_centavos / 100,
         "payments": results
     }  

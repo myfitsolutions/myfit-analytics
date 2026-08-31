@@ -45,6 +45,14 @@
 
         <aside id="data-source-indicator" class="data-source-indicator" aria-live="polite"><strong>Data Source</strong><span id="data-source-name">Loading…</span><span id="data-source-updated"></span></aside>
 
+        <section class="panel data-trust-panel" aria-labelledby="data-trust-title">
+            <div class="crm-title">
+                <div><h2 id="data-trust-title">Data Readiness</h2><p id="data-trust-source">Checking imported data…</p></div>
+                {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">View Import History</a>{% endif %}
+            </div>
+            <div id="data-trust-grid" class="data-trust-grid" aria-live="polite"></div>
+        </section>
+
         {% if not has_data %}
         <section class="panel dashboard-empty-guidance">
             <h2>No studio data yet</h2>
@@ -290,7 +298,7 @@
                     </div>
                     <div class="recovery-summary">
                         <div class="recovery-stat">
-                            <span>Failed Payments</span>
+                            <span>Needs Attention</span>
                             <strong id="recovery-failed-count">0</strong>
                         </div>
                         <div class="recovery-stat">
@@ -306,11 +314,12 @@
                                 <th scope="col">Member</th>
                                 <th scope="col">Email</th>
                                 <th scope="col">Failed Amount</th>
+                                <th scope="col">Workflow Status</th>
                             </tr>
                         </thead>
                         <tbody id="payment-recovery-list">
                             <tr>
-                                <td colspan="3" class="empty-state">Loading failed payments...</td>
+                                <td colspan="4" class="empty-state">Loading failed payments...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -577,6 +586,25 @@
             const available = Object.entries(dataSourceStatus.availability).filter(([, value]) => value).map(([key]) => key[0].toUpperCase() + key.slice(1));
             document.getElementById("settings-data-availability").textContent = available.length ? `Data currently available: ${available.join(", ")}` : "No normalized datasets imported yet.";
             document.getElementById("settings-data-last-import").textContent = `Last Import: ${formatDataSourceDate(primary?.last_import_at)}`;
+            const trust = dataSourceStatus.data_trust;
+            document.getElementById("data-trust-source").textContent = trust.platform_name
+                ? `Imported data · Platform: ${trust.platform_name}`
+                : "Imported data · No platform selected";
+            const trustGrid = document.getElementById("data-trust-grid");
+            trustGrid.replaceChildren();
+            const labels = {members:"Members",bookings:"Bookings / Attendance",payments:"Payments",revenue:"Revenue"};
+            Object.entries(trust.datasets).forEach(([key, dataset]) => {
+                const item = document.createElement("article");
+                item.className = `data-trust-item${dataset.available ? " data-trust-available" : ""}`;
+                item.append(
+                    actionHistoryText("strong", "", labels[key]),
+                    actionHistoryText("span", "", dataset.available ? `Available · ${dataset.record_count} records` : "No data imported"),
+                    actionHistoryText("small", "", dataset.last_imported_at
+                        ? `Last imported ${formatDataSourceDate(dataset.last_imported_at)}${dataset.source ? ` · ${dataset.source}` : ""}`
+                        : "No successful import recorded")
+                );
+                trustGrid.appendChild(item);
+            });
             const select = document.getElementById("setting-primary-platform"); select.replaceChildren();
             dataSourceStatus.platforms.forEach(platform => { const option=document.createElement("option"); option.value=platform.key; option.textContent=platform.name; option.selected=primary?.platform===platform.key; select.appendChild(option); });
             document.getElementById("save-primary-platform").textContent = primary ? "Change Platform" : "Choose Platform";
@@ -909,25 +937,32 @@
                 studioUrl("/analytics/monthly")
             );
 
+            if (!response.ok) {
+                throw new Error(`Monthly analytics request failed with ${response.status}`);
+            }
+
             const data = await response.json();
 
 
             document.getElementById(
                 "total-revenue"
-            ).textContent =
-                formatCurrency(data.current_month.revenue);
+            ).textContent = data.financial_revenue_available
+                ? formatCurrency(data.current_month.revenue)
+                : "Not available";
 
 
             document.getElementById(
                 "total-bookings"
-            ).textContent =
-                data.current_month.total_bookings;
+            ).textContent = data.availability.bookings
+                ? data.current_month.total_bookings
+                : "Not available";
 
 
             document.getElementById(
                 "attendance-rate"
-            ).textContent =
-                data.current_month.attendance_rate + "%";
+            ).textContent = data.availability.bookings
+                ? data.current_month.attendance_rate + "%"
+                : "Not available";
 
 
             const changeElement =
@@ -936,7 +971,9 @@
                 );
 
 
-            if (
+            if (!data.financial_revenue_available) {
+                changeElement.textContent = "Import revenue data to activate this insight";
+            } else if (
                 data.revenue_change_percent === null
             ) {
 
@@ -961,6 +998,10 @@
                     ) +
                     "% vs last month";
             }
+
+            if (data.financial_revenue_source === "legacy_payments") {
+                changeElement.textContent = `Payment import fallback · ${changeElement.textContent}`;
+            }
         }
 
 
@@ -973,6 +1014,10 @@
             const response = await fetch(
                 studioUrl("/analytics/overview")
             );
+
+            if (!response.ok) {
+                throw new Error(`Overview request failed with ${response.status}`);
+            }
 
             const data = await response.json();
 
@@ -1015,10 +1060,9 @@
 
             document.getElementById(
                 "revenue-per-member"
-            ).textContent =
-                formatCurrency(
-                    data.average_revenue_per_active_member
-                );
+            ).textContent = data.average_revenue_per_active_member !== null
+                ? formatCurrency(data.average_revenue_per_active_member)
+                : "Not available";
 
 
             document.getElementById(
@@ -1047,6 +1091,16 @@
     async function loadRetentionHealth() {
 
     try {
+
+        if (dataSourceStatus && !dataSourceStatus.availability.bookings) {
+            ["retention-healthy", "retention-watch", "retention-risk", "retention-critical"].forEach(id => {
+                document.getElementById(id).textContent = "—";
+            });
+            document.getElementById("retention-member-list").replaceChildren(
+                actionHistoryText("p", "empty-state", "No bookings imported. Retention and attendance intelligence are not available yet.")
+            );
+            return;
+        }
 
         const response = await fetch(
             studioUrl("/analytics/retention-health")
@@ -2200,7 +2254,7 @@
 
                 const data = await response.json();
                 document.getElementById("recovery-failed-count").textContent =
-                    data.failed_payment_count;
+                    data.needs_attention_count;
                 document.getElementById("recovery-total").textContent =
                     formatCurrency(data.revenue_to_recover);
 
@@ -2209,9 +2263,11 @@
                 if (data.payments.length === 0) {
                     const row = list.insertRow();
                     const cell = row.insertCell();
-                    cell.colSpan = 3;
+                    cell.colSpan = 4;
                     cell.className = "empty-state";
-                    cell.textContent = "No failed payments to recover.";
+                    cell.textContent = dataSourceStatus && !dataSourceStatus.availability.payments
+                        ? "No payments imported. Payment Recovery is not available yet."
+                        : "No failed payments need attention.";
                     return;
                 }
 
@@ -2220,6 +2276,7 @@
                     const nameCell = row.insertCell();
                     const emailCell = row.insertCell();
                     const amountCell = row.insertCell();
+                    const statusCell = row.insertCell();
 
                     const memberLink = document.createElement("a");
                     memberLink.className = "dashboard-member-link";
@@ -2229,12 +2286,23 @@
                     emailCell.textContent = payment.email || "No email available";
                     amountCell.className = "payment-amount";
                     amountCell.textContent = formatCurrency(payment.amount);
+                    const statusLabel = payment.workflow_status === "resolved"
+                        ? "Resolved operationally"
+                        : payment.workflow_status === "contacted"
+                            ? "Contacted"
+                            : payment.workflow_status === "snoozed"
+                                ? "Snoozed"
+                                : "Needs attention";
+                    statusCell.appendChild(actionHistoryText("strong", "", statusLabel));
+                    if (payment.later_matching_payment) {
+                        statusCell.appendChild(actionHistoryText("p", "", "Later matching successful payment recorded; recovery not automatically confirmed."));
+                    }
                 });
             } catch (error) {
                 console.error("Payment recovery error:", error);
                 const row = document.createElement("tr");
                 const cell = document.createElement("td");
-                cell.colSpan = 3;
+                cell.colSpan = 4;
                 cell.className = "empty-state error-state";
                 cell.textContent = "Unable to load payment recovery.";
                 row.appendChild(cell);
@@ -2260,17 +2328,38 @@
                 console.error("Initial settings error:", error);
             }
 
-            await Promise.all([
-                loadDataSourceStatus(),
-                loadRevenueIntelligence(),
-                loadAnalytics(),
-                loadMonthlyAnalytics(),
-                loadRetentionHealth(),
-                loadPaymentRecovery(),
-                loadActionCenter(),
-                loadFollowUps(),
-                loadActionHistory()
-            ]);
+            try {
+                await loadDataSourceStatus();
+            } catch (error) {
+                console.error("Data readiness error:", error);
+                document.getElementById("data-trust-grid").replaceChildren(
+                    actionHistoryText("p", "error-state", "Unable to load data readiness.")
+                );
+            }
+
+            const loaders = [
+                ["revenue", loadRevenueIntelligence],
+                ["overview", loadAnalytics],
+                ["monthly", loadMonthlyAnalytics],
+                ["retention", loadRetentionHealth],
+                ["payment recovery", loadPaymentRecovery],
+                ["Action Center", loadActionCenter],
+                ["follow-ups", loadFollowUps],
+                ["Action History", loadActionHistory]
+            ];
+            const results = await Promise.allSettled(loaders.map(([, loader]) => loader()));
+            results.forEach((result, index) => {
+                if (result.status === "rejected") console.error(`${loaders[index][0]} loading error:`, result.reason);
+            });
+            if (results[1].status === "rejected") {
+                document.getElementById("revenue-per-member").textContent = "Unavailable";
+            }
+            if (results[2].status === "rejected") {
+                document.getElementById("total-revenue").textContent = "Unavailable";
+                document.getElementById("total-bookings").textContent = "Unavailable";
+                document.getElementById("attendance-rate").textContent = "Unavailable";
+                document.getElementById("revenue-change").textContent = "Unable to load dashboard totals";
+            }
         }
 
         initializeDashboard();

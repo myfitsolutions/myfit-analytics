@@ -53,13 +53,13 @@ class StudioDataSourceTests(unittest.TestCase):
         with self.assertRaises(IntegrityError): self.db.commit()
         self.db.rollback()
 
-    def test_dataset_availability_uses_records_or_non_rolled_back_imports(self):
+    def test_dataset_availability_uses_current_normalized_records(self):
         self.assertEqual(get_dataset_availability(self.db, 1), {"members":False,"bookings":False,"payments":False,"revenue":False})
         self.db.add(Member(id=1, studio_id=1, first_name="A", last_name="One", email="a@one.test")); self.db.commit()
         self.assertTrue(get_dataset_availability(self.db, 1)["members"])
         self.db.add(ImportBatch(studio_id=1, user_id=1, import_type="bookings", filename="empty.csv", imported_count=0)); self.db.commit()
         availability = get_dataset_availability(self.db, 1)
-        self.assertTrue(availability["bookings"])
+        self.assertFalse(availability["bookings"])
         self.assertFalse(availability["payments"])
         self.db.add(Payment(studio_id=1, member_id=1, amount=1000, status="paid")); self.db.commit()
         availability = get_dataset_availability(self.db, 1)

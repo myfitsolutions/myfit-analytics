@@ -1,0 +1,6 @@
+First Name,Last Name,Email Address,Member Status,Last Attendance,Membership Type,Unnamed: 8
+Hana,Healthy,hana.healthy@example.test,Current,2026-08-25T09:00:00+08:00,Unlimited,active-source
+Felix,Finance,felix.finance@example.test,Enabled,2026-08-20T10:00:00+08:00,Monthly,active-source
+Hana,Healthy,hana.healthy@example.test,Current,2026-08-25T09:00:00+08:00,Unlimited,duplicate
+Invalid,,invalid.member@example.test,Current,2026-08-20T10:00:00+08:00,Trial,missing-last-name
+Inez,Inactive,inez.inactive@example.test,Former,,None,ignored-value
