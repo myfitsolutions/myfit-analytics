@@ -118,9 +118,9 @@ class UIModernizationTests(unittest.TestCase):
         for control in ('setting-name','setting-timezone','setting-currency','setting-sender-name','setting-healthy','setting-watch','setting-at-risk','setting-follow-up','setting-primary-platform'):
             self.assertIn(f'id="{control}"',dashboard)
         self.assertIn('.settings-form .settings-grid input,.settings-form .settings-follow-up-label input',css)
-        self.assertIn('.settings-fieldset { border-color:var(--border); }',css)
-        self.assertIn('.settings-fieldset legend,.data-source-settings strong { color:var(--text); }',css)
-        self.assertIn('.settings-help,.settings-status,.message-modal-header p,.team-member span { color:var(--text-muted); }',css)
+        self.assertIn('.settings-form .settings-fieldset { border-color:var(--border); }',css)
+        self.assertIn('.settings-form .settings-fieldset legend,.settings-form .data-source-settings strong { color:var(--text); }',css)
+        self.assertIn('.settings-form .settings-help,.settings-form .settings-status { color:var(--text-muted); }',css)
         self.assertIn('.data-source-controls select',css)
         self.assertIn('input:disabled,select:disabled,textarea:disabled,input[readonly],textarea[readonly]',css)
         self.assertIn('-webkit-text-fill-color:var(--text-secondary)',css)
@@ -128,19 +128,26 @@ class UIModernizationTests(unittest.TestCase):
 
     def test_studio_settings_values_override_disabled_and_browser_foregrounds(self):
         css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        final_start=css.index('/* Final Studio Settings theme contract.')
+        self.assertGreater(final_start,css.rindex('input:disabled,select:disabled'))
+        legacy_labels=css[css.index('.settings-grid label,'):css.index('.settings-grid input,')]
+        legacy_inputs=css[css.index('.settings-grid input,'):css.index('.settings-fieldset {')]
+        self.assertNotIn('color:',legacy_labels);self.assertNotIn('color:',legacy_inputs)
         self.assertIn('.settings-form .settings-grid label,.settings-form .settings-follow-up-label { color:var(--text-secondary); }',css)
-        self.assertIn('color:var(--text); -webkit-text-fill-color:var(--text); opacity:1;',css)
+        final_contract=css[final_start:]
+        self.assertIn('color:var(--text)',final_contract);self.assertIn('-webkit-text-fill-color:var(--text); opacity:1;',final_contract)
         self.assertIn('.settings-form .settings-grid input:disabled',css)
         self.assertIn('.settings-form .settings-grid input[readonly]',css)
         self.assertIn('.settings-form .settings-follow-up-label input:disabled',css)
         self.assertIn('.settings-form .data-source-controls select:disabled',css)
-        self.assertIn('.settings-form .data-source-controls select { color:var(--text); -webkit-text-fill-color:var(--text); opacity:1; }',css)
-        self.assertIn('color:var(--text-secondary); -webkit-text-fill-color:var(--text-secondary); opacity:1;',css)
         self.assertIn('.settings-form input::placeholder { color:var(--text-muted); opacity:1; }',css)
-        self.assertIn('.settings-form input:-webkit-autofill,.team-add-form input:-webkit-autofill',css)
-        self.assertIn('input:disabled:-webkit-autofill',css)
+        self.assertIn('.settings-form input:-webkit-autofill',css)
+        self.assertIn('input[readonly]:-webkit-autofill',css)
         self.assertIn('.team-add-form input:disabled,.team-add-form input[readonly],.team-add-form select:disabled',css)
-        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        self.assertIn('field.readOnly = !canEditSettings',dashboard)
+        self.assertNotIn('field.disabled = !canEditSettings',dashboard)
+        self.assertIn('/static/style.css?v=settings-theme-v3',dashboard)
         for number_id in ('setting-healthy','setting-watch','setting-at-risk','setting-follow-up'):
             self.assertIn(f'id="{number_id}" type="number"',dashboard)
 

@@ -8,7 +8,7 @@
 
     <link
         rel="stylesheet"
-        href="/static/style.css"
+        href="/static/style.css?v=settings-theme-v3"
     >
     <script src="/static/ui.js"></script>
 </head>
@@ -639,7 +639,7 @@
                 await Promise.all([loadStudioSettings(), loadDataSourceStatus()]);
                 const canEditSettings = CURRENT_USER_ROLE === "owner";
                 Object.values(settingsFields).forEach(field => {
-                    field.disabled = !canEditSettings;
+                    field.readOnly = !canEditSettings;
                 });
                 saveSettingsButton.hidden = !canEditSettings;
                 saveSettingsButton.disabled = !canEditSettings;

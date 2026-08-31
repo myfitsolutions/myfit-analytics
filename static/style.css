@@ -1071,7 +1071,6 @@ body.modal-open {
 .settings-follow-up-label {
     display: grid;
     gap: 7px;
-    color: #374151;
     font-size: 13px;
     font-weight: 600;
 }
@@ -1082,7 +1081,6 @@ body.modal-open {
     padding: 10px 11px;
     border: 1px solid #d1d5db;
     border-radius: 8px;
-    color: #111827;
     font: inherit;
     font-weight: 400;
 }
@@ -1096,7 +1094,6 @@ body.modal-open {
 
 .settings-fieldset legend {
     padding: 0 7px;
-    color: #374151;
     font-size: 14px;
     font-weight: 700;
 }
@@ -1108,7 +1105,6 @@ body.modal-open {
 .settings-grid label span,
 .settings-follow-up-label span,
 .settings-help {
-    color: #6b7280;
     font-size: 12px;
     font-weight: 400;
 }
@@ -1124,16 +1120,7 @@ body.modal-open {
 
 .settings-status {
     min-height: 18px;
-    color: #6b7280;
     font-size: 13px;
-}
-
-.settings-status-success {
-    color: #047857;
-}
-
-.settings-status-error {
-    color: #b91c1c;
 }
 
 .team-modal {
@@ -1879,28 +1866,13 @@ input,select,textarea,.crm-search,.message-subject,.message-textarea {
 }
 input::placeholder,textarea::placeholder { color:var(--text-muted); }select option { background:var(--surface-solid); color:var(--text); }
 .action-history-header select,.crm-activity-header select,.data-source-controls select,.revenue-intelligence-panel select,.team-add-form select,.team-member-controls select { border-color:var(--border); background:var(--app-bg-soft); color:var(--text); }
-.crm-search-label,.message-label,.member-import-form label,.settings-form label { color:var(--text-secondary); }
-.settings-form .settings-grid input,.settings-form .settings-follow-up-label input,.team-add-form input { border-color:var(--border); background:var(--app-bg-soft); color:var(--text); }
-.settings-fieldset { border-color:var(--border); }.settings-fieldset legend,.data-source-settings strong { color:var(--text); }.settings-help,.settings-status,.message-modal-header p,.team-member span { color:var(--text-muted); }
-.settings-status-success { color:var(--success); }.settings-status-error { color:var(--danger); }
+.crm-search-label,.message-label,.member-import-form label { color:var(--text-secondary); }
+.team-add-form input { border-color:var(--border); background:var(--app-bg-soft); color:var(--text); }
+.message-modal-header p,.team-member span { color:var(--text-muted); }
 .team-add-form { border-color:var(--border); background:var(--app-bg-soft); }.team-add-form label { color:var(--text-secondary); }
 input:disabled,select:disabled,textarea:disabled,input[readonly],textarea[readonly] { border-color:var(--border); background:var(--surface-elevated); color:var(--text-secondary); -webkit-text-fill-color:var(--text-secondary); opacity:.72; }
-.settings-form .settings-grid label,.settings-form .settings-follow-up-label { color:var(--text-secondary); }
-.settings-form .settings-grid input,.settings-form .settings-follow-up-label input {
-    color:var(--text); -webkit-text-fill-color:var(--text); opacity:1;
-}
-.settings-form .data-source-controls select { color:var(--text); -webkit-text-fill-color:var(--text); opacity:1; }
-.settings-form .settings-grid input:disabled,.settings-form .settings-follow-up-label input:disabled,
-.settings-form .settings-grid input[readonly],.settings-form .settings-follow-up-label input[readonly],
-.settings-form .data-source-controls select:disabled {
-    background:var(--surface-elevated); color:var(--text-secondary); -webkit-text-fill-color:var(--text-secondary); opacity:1;
-}
-.settings-form input::placeholder { color:var(--text-muted); opacity:1; }
-.settings-form input:-webkit-autofill,.team-add-form input:-webkit-autofill {
+.team-add-form input:-webkit-autofill {
     box-shadow:0 0 0 1000px var(--app-bg-soft) inset; -webkit-text-fill-color:var(--text); caret-color:var(--blue);
-}
-.settings-form .settings-grid input:disabled:-webkit-autofill,.settings-form .settings-follow-up-label input:disabled:-webkit-autofill {
-    box-shadow:0 0 0 1000px var(--surface-elevated) inset; -webkit-text-fill-color:var(--text-secondary);
 }
 .team-add-form input,.team-add-form select { color:var(--text); -webkit-text-fill-color:var(--text); opacity:1; }
 .team-add-form input:disabled,.team-add-form input[readonly],.team-add-form select:disabled {
@@ -1992,3 +1964,29 @@ input:disabled,select:disabled,textarea:disabled,input[readonly],textarea[readon
 .report-breakdowns { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; margin-top:16px; }.report-breakdown { padding:16px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--app-bg-soft); }.report-breakdown>div { display:flex; justify-content:space-between; gap:16px; padding:9px 0; border-bottom:1px solid var(--border); }.report-breakdown>div:last-child { border-bottom:0; }
 @media (max-width:640px) { .dashboard-quick-nav { margin-top:-6px; padding-bottom:8px; }.reports-heading { align-items:stretch; }.reports-range-controls button { flex:1 1 45%; }.report-metrics { grid-template-columns:1fr 1fr; }.report-breakdowns { grid-template-columns:1fr; } }
 @media (max-width:420px) { .report-metrics { grid-template-columns:1fr; } }
+
+/* Final Studio Settings theme contract. Keep after legacy form declarations. */
+.settings-form .settings-grid label,.settings-form .settings-follow-up-label { color:var(--text-secondary); }
+.settings-form .settings-grid input,.settings-form .settings-follow-up-label input,
+.settings-form .data-source-controls select {
+    border-color:var(--border); background:var(--app-bg-soft); color:var(--text);
+    -webkit-text-fill-color:var(--text); opacity:1;
+}
+.settings-form .settings-grid input:disabled,.settings-form .settings-follow-up-label input:disabled,
+.settings-form .settings-grid input[readonly],.settings-form .settings-follow-up-label input[readonly],
+.settings-form .data-source-controls select:disabled {
+    border-color:var(--border); background:var(--surface-elevated); color:var(--text);
+    -webkit-text-fill-color:var(--text); opacity:1;
+}
+.settings-form .settings-fieldset { border-color:var(--border); }
+.settings-form .settings-fieldset legend,.settings-form .data-source-settings strong { color:var(--text); }
+.settings-form .settings-grid label span,.settings-form .settings-follow-up-label span,
+.settings-form .settings-help,.settings-form .settings-status { color:var(--text-muted); }
+.settings-form .settings-status-success { color:var(--success); }.settings-form .settings-status-error { color:var(--danger); }
+.settings-form input::placeholder { color:var(--text-muted); opacity:1; }
+.settings-form input:-webkit-autofill {
+    box-shadow:0 0 0 1000px var(--app-bg-soft) inset; -webkit-text-fill-color:var(--text); caret-color:var(--blue);
+}
+.settings-form input[readonly]:-webkit-autofill,.settings-form input:disabled:-webkit-autofill {
+    box-shadow:0 0 0 1000px var(--surface-elevated) inset; -webkit-text-fill-color:var(--text);
+}
