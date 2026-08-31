@@ -1885,6 +1885,27 @@ input::placeholder,textarea::placeholder { color:var(--text-muted); }select opti
 .settings-status-success { color:var(--success); }.settings-status-error { color:var(--danger); }
 .team-add-form { border-color:var(--border); background:var(--app-bg-soft); }.team-add-form label { color:var(--text-secondary); }
 input:disabled,select:disabled,textarea:disabled,input[readonly],textarea[readonly] { border-color:var(--border); background:var(--surface-elevated); color:var(--text-secondary); -webkit-text-fill-color:var(--text-secondary); opacity:.72; }
+.settings-form .settings-grid label,.settings-form .settings-follow-up-label { color:var(--text-secondary); }
+.settings-form .settings-grid input,.settings-form .settings-follow-up-label input {
+    color:var(--text); -webkit-text-fill-color:var(--text); opacity:1;
+}
+.settings-form .data-source-controls select { color:var(--text); -webkit-text-fill-color:var(--text); opacity:1; }
+.settings-form .settings-grid input:disabled,.settings-form .settings-follow-up-label input:disabled,
+.settings-form .settings-grid input[readonly],.settings-form .settings-follow-up-label input[readonly],
+.settings-form .data-source-controls select:disabled {
+    background:var(--surface-elevated); color:var(--text-secondary); -webkit-text-fill-color:var(--text-secondary); opacity:1;
+}
+.settings-form input::placeholder { color:var(--text-muted); opacity:1; }
+.settings-form input:-webkit-autofill,.team-add-form input:-webkit-autofill {
+    box-shadow:0 0 0 1000px var(--app-bg-soft) inset; -webkit-text-fill-color:var(--text); caret-color:var(--blue);
+}
+.settings-form .settings-grid input:disabled:-webkit-autofill,.settings-form .settings-follow-up-label input:disabled:-webkit-autofill {
+    box-shadow:0 0 0 1000px var(--surface-elevated) inset; -webkit-text-fill-color:var(--text-secondary);
+}
+.team-add-form input,.team-add-form select { color:var(--text); -webkit-text-fill-color:var(--text); opacity:1; }
+.team-add-form input:disabled,.team-add-form input[readonly],.team-add-form select:disabled {
+    color:var(--text-secondary); -webkit-text-fill-color:var(--text-secondary); opacity:1;
+}
 
 .crm-status,.activity-badge,.action-history-badge,.revenue-kind,.revenue-kind-refund { border-width:1px; border-style:solid; border-radius:999px; font-weight:800; letter-spacing:.03em; }
 .crm-status-healthy,.retention-healthy,.status-paid { border-color:color-mix(in srgb,var(--success) 38%,transparent); background:color-mix(in srgb,var(--success) 12%,transparent); color:var(--success); }

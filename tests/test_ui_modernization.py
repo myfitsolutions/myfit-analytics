@@ -126,6 +126,24 @@ class UIModernizationTests(unittest.TestCase):
         self.assertIn('-webkit-text-fill-color:var(--text-secondary)',css)
         self.assertIn('.team-add-form { border-color:var(--border); background:var(--app-bg-soft); }',css)
 
+    def test_studio_settings_values_override_disabled_and_browser_foregrounds(self):
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        self.assertIn('.settings-form .settings-grid label,.settings-form .settings-follow-up-label { color:var(--text-secondary); }',css)
+        self.assertIn('color:var(--text); -webkit-text-fill-color:var(--text); opacity:1;',css)
+        self.assertIn('.settings-form .settings-grid input:disabled',css)
+        self.assertIn('.settings-form .settings-grid input[readonly]',css)
+        self.assertIn('.settings-form .settings-follow-up-label input:disabled',css)
+        self.assertIn('.settings-form .data-source-controls select:disabled',css)
+        self.assertIn('.settings-form .data-source-controls select { color:var(--text); -webkit-text-fill-color:var(--text); opacity:1; }',css)
+        self.assertIn('color:var(--text-secondary); -webkit-text-fill-color:var(--text-secondary); opacity:1;',css)
+        self.assertIn('.settings-form input::placeholder { color:var(--text-muted); opacity:1; }',css)
+        self.assertIn('.settings-form input:-webkit-autofill,.team-add-form input:-webkit-autofill',css)
+        self.assertIn('input:disabled:-webkit-autofill',css)
+        self.assertIn('.team-add-form input:disabled,.team-add-form input[readonly],.team-add-form select:disabled',css)
+        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        for number_id in ('setting-healthy','setting-watch','setting-at-risk','setting-follow-up'):
+            self.assertIn(f'id="{number_id}" type="number"',dashboard)
+
     def test_revenue_import_card_explains_platform_prerequisite(self):
         template=templates.env.get_template("imports.html")
         context={"studio_id":1,"studio_name":"Test","user_email":"owner@test","user_role":"owner"}
