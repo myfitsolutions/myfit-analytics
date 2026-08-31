@@ -15,7 +15,7 @@
 
 <body>
 
-    <div class="dashboard">
+    <div id="dashboard-overview" class="dashboard">
 
         <header class="dashboard-header">
             <div>
@@ -42,6 +42,14 @@
                 </form>
             </div>
         </header>
+
+        <nav class="dashboard-quick-nav" aria-label="Dashboard sections">
+            <a href="#dashboard-overview">Overview</a>
+            <a href="#retention-health">Retention Health</a>
+            <a href="#payment-recovery">Payment Recovery</a>
+            <a href="#action-center">Action Center</a>
+            <a href="#follow-ups">Follow-Ups</a>
+        </nav>
 
         <aside id="data-source-indicator" class="data-source-indicator" aria-live="polite"><strong>Data Source</strong><span id="data-source-name">Loading…</span><span id="data-source-updated"></span></aside>
 
@@ -237,7 +245,7 @@
 
         <!-- FOLLOW-UPS -->
 
-        <section class="follow-ups-section">
+        <section id="follow-ups" class="follow-ups-section">
             <div class="panel follow-ups-panel">
                 <div class="follow-ups-header">
                     <div>

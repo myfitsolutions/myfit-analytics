@@ -840,6 +840,20 @@ def revenue_page(request: Request, db: Session = Depends(get_db)):
     })
 
 
+@app.get("/reports")
+def reports_page(request: Request, db: Session = Depends(get_db)):
+    current_user = get_current_user(request, db)
+    if not current_user:
+        return RedirectResponse("/login", status_code=303)
+    studio = get_studio(db, current_user.studio_id)
+    if studio.onboarding_completed_at is None:
+        return RedirectResponse("/onboarding", status_code=303)
+    return templates.TemplateResponse(request=request, name="reports.html", context={
+        "studio_id": studio.id, "studio_name": studio.name, "currency": studio.currency,
+        "user_email": current_user.email, "user_role": current_user.role,
+    })
+
+
 @app.post("/onboarding/complete")
 def complete_onboarding(
     onboarding: OnboardingComplete,
@@ -3804,6 +3818,140 @@ def revenue_date_bounds(studio, range_name, start_date=None, end_date=None):
     start_at = datetime.combine(start, datetime.min.time(), tzinfo=zone).astimezone(timezone.utc)
     end_at = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=zone).astimezone(timezone.utc)
     return start_at, end_at
+
+
+def reports_date_bounds(studio, range_name):
+    zone = ZoneInfo(studio.timezone)
+    today = datetime.now(timezone.utc).astimezone(zone).date()
+    month_start = today.replace(day=1)
+    months = {"this_month": 1, "last_3_months": 3, "last_6_months": 6}
+    if range_name == "last_month":
+        end = month_start
+        start = end - relativedelta(months=1)
+    else:
+        start = month_start - relativedelta(months=months[range_name] - 1)
+        end = today + timedelta(days=1)
+    duration = end - start
+    previous_start = start - duration
+    def utc(value):
+        return datetime.combine(value, datetime.min.time(), tzinfo=zone).astimezone(timezone.utc)
+    return utc(start), utc(end), utc(previous_start), utc(start)
+
+
+def report_percentage(value, denominator):
+    return round(value * 100 / denominator, 2) if denominator else 0
+
+
+@app.get("/studios/{studio_id}/analytics/reports")
+def get_reports_analytics(
+    studio_id: int,
+    range: Literal["this_month", "last_month", "last_3_months", "last_6_months"] = "this_month",
+    authorized_user: User = Depends(require_studio_user),
+    db: Session = Depends(get_db),
+):
+    studio = get_studio(db, studio_id)
+    availability = get_dataset_availability(db, studio_id)
+    start_at, end_at, previous_start, previous_end = reports_date_bounds(studio, range)
+    members = db.query(Member).filter(Member.studio_id == studio_id).all()
+    active_members = [member for member in members if member.status == "active"]
+    inactive_members = [member for member in members if member.status == "inactive"]
+    active_count, member_total = len(active_members), len(members)
+
+    retention = attendance = member_activity = None
+    if availability["members"]:
+        member_activity = {
+            "total": member_total, "active": active_count,
+            "active_percentage": report_percentage(active_count, member_total),
+            "inactive": len(inactive_members),
+            "inactive_percentage": report_percentage(len(inactive_members), member_total),
+            "members_with_no_attendance": None, "members_with_declining_attendance": None,
+            "average_attended_visits_per_active_member": None,
+        }
+    if availability["members"] and availability["bookings"]:
+        latest_attendance = get_latest_attendance_by_member(db, studio_id)
+        now = datetime.now(timezone.utc)
+        retention_counts = {"healthy": 0, "watch": 0, "at_risk": 0, "critical": 0}
+        for member in active_members:
+            status, _ = calculate_retention_status(latest_attendance.get(member.id), now, studio)
+            retention_counts[status] += 1
+        retention = {"snapshot": "Current snapshot", "total_members_considered": active_count, "statuses": {
+            status: {"count": count, "percentage": report_percentage(count, active_count)}
+            for status, count in retention_counts.items()
+        }}
+        booking_rows = db.query(
+            func.count(Booking.id).label("total"),
+            func.sum(case((Booking.status == "attended", 1), else_=0)).label("attended"),
+            func.sum(case((Booking.status == "cancelled", 1), else_=0)).label("cancelled"),
+            func.sum(case((Booking.status == "no_show", 1), else_=0)).label("no_show"),
+            func.sum(case((Booking.status == "booked", 1), else_=0)).label("booked"),
+        ).filter(Booking.studio_id == studio_id, Booking.booking_date >= start_at, Booking.booking_date < end_at).one()
+        previous_total = db.query(func.count(Booking.id)).filter(
+            Booking.studio_id == studio_id, Booking.booking_date >= previous_start, Booking.booking_date < previous_end
+        ).scalar() or 0
+        counts = {name: int(getattr(booking_rows, name) or 0) for name in ("attended", "cancelled", "no_show", "booked")}
+        total = int(booking_rows.total or 0)
+        attendance = {
+            "total_bookings": total,
+            **{name: {"count": count, "percentage": report_percentage(count, total)} for name, count in counts.items()},
+            "attendance_rate": report_percentage(counts["attended"], total),
+            "bookings_per_active_member": round(total / active_count, 2) if active_count else None,
+            "previous_period_bookings": previous_total,
+            "booking_change_percentage": round((total - previous_total) * 100 / previous_total, 2) if previous_total else None,
+        }
+        attendance_aggregates = get_attendance_aggregates(db, studio_id, now)
+        attended_all_time = sum(item["total_attended"] for item in attendance_aggregates.values())
+        member_activity.update({
+            "members_with_no_attendance": sum(member.id not in latest_attendance for member in members),
+            "members_with_declining_attendance": sum(bool(attendance_aggregates.get(member.id, {}).get("attendance_declining")) for member in active_members),
+            "average_attended_visits_per_active_member": round(attended_all_time / active_count, 2) if active_count else None,
+        })
+
+    payments = None
+    if availability["payments"]:
+        payment_rows = db.query(
+            func.count(Payment.id).label("total"),
+            func.sum(case((Payment.status == "paid", 1), else_=0)).label("paid"),
+            func.sum(case((Payment.status == "failed", 1), else_=0)).label("failed"),
+        ).filter(Payment.studio_id == studio_id, Payment.payment_date >= start_at, Payment.payment_date < end_at).one()
+        payment_total, paid, failed = int(payment_rows.total or 0), int(payment_rows.paid or 0), int(payment_rows.failed or 0)
+        issue_members = db.query(func.count(func.distinct(Payment.member_id))).filter(
+            Payment.studio_id == studio_id, Payment.status == "failed", Payment.payment_date >= start_at, Payment.payment_date < end_at
+        ).scalar() or 0
+        recovery = get_payment_recovery(studio_id, authorized_user, db)
+        payments = {
+            "total": payment_total,
+            "successful": {"count": paid, "percentage": report_percentage(paid, payment_total)},
+            "failed": {"count": failed, "percentage": report_percentage(failed, payment_total)},
+            "members_with_issues": issue_members, "amount_needing_attention": recovery["revenue_to_recover"],
+            "attention_scope": "Current unresolved payment actions; resolution does not confirm financial recovery",
+        }
+
+    revenue = None
+    if availability["revenue"]:
+        def revenue_period(period_start, period_end):
+            return db.query(
+                func.coalesce(func.sum(RevenueTransaction.net_revenue), 0).label("net"), func.count(RevenueTransaction.id).label("transactions"),
+                func.sum(case((RevenueTransaction.transaction_kind == "refund", 1), else_=0)).label("refunds"),
+                func.coalesce(func.sum(case((RevenueTransaction.transaction_kind == "refund", -RevenueTransaction.net_revenue), else_=0)), 0).label("refund_value"),
+            ).filter(RevenueTransaction.studio_id == studio_id, RevenueTransaction.analytics_date >= period_start, RevenueTransaction.analytics_date < period_end).one()
+        current_revenue, previous_revenue = revenue_period(start_at, end_at), revenue_period(previous_start, previous_end)
+        previous_net, current_net = Decimal(previous_revenue.net or 0), Decimal(current_revenue.net or 0)
+        def revenue_groups(column):
+            return [{"label": row.label or "Unspecified", "net_revenue": row.net or 0} for row in db.query(
+                column.label("label"), func.sum(RevenueTransaction.net_revenue).label("net")
+            ).filter(RevenueTransaction.studio_id == studio_id, RevenueTransaction.analytics_date >= start_at, RevenueTransaction.analytics_date < end_at).group_by(column).order_by(func.sum(RevenueTransaction.net_revenue).desc()).all()]
+        revenue = {
+            "source": "RevenueTransaction", "net_revenue": current_net, "previous_period_net_revenue": previous_net,
+            "change_percentage": round((current_net - previous_net) * 100 / previous_net, 2) if previous_net else None,
+            "transaction_count": current_revenue.transactions, "refund_count": current_revenue.refunds or 0,
+            "refund_value": current_revenue.refund_value,
+            "revenue_per_active_member": round(current_net / active_count, 2) if active_count else None,
+            "gross_revenue": None, "by_type": revenue_groups(RevenueTransaction.revenue_type),
+            "by_payment_method": revenue_groups(RevenueTransaction.payment_method),
+        }
+    return {"studio_id": studio_id, "selected_range": range, "range": {"start": start_at, "end": end_at},
+            "availability": availability, "retention": retention, "attendance": attendance,
+            "member_activity": member_activity, "payments": payments, "revenue": revenue}
 
 
 @app.get("/studios/{studio_id}/analytics/revenue")

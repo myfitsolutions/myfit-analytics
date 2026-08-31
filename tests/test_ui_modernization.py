@@ -11,35 +11,41 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class UIModernizationTests(unittest.TestCase):
     def test_existing_templates_load_and_share_ui_layer(self):
-        pages=("login.html","onboarding.html","dashboard.html","revenue.html","members.html","member_detail.html","imports.html")
+        pages=("login.html","onboarding.html","dashboard.html","reports.html","revenue.html","members.html","member_detail.html","imports.html")
         for page in pages:
             templates.env.get_template(page)
             self.assertIn('/static/style.css',(ROOT/"templates"/page).read_text(encoding="utf-8"))
             self.assertIn('/static/ui.js',(ROOT/"templates"/page).read_text(encoding="utf-8"))
 
-    def test_navigation_uses_only_real_routes_and_real_dashboard_sections(self):
+    def test_navigation_uses_only_stable_top_level_routes(self):
         script=(ROOT/"static/ui.js").read_text(encoding="utf-8")
         route_paths={route.path for route in app.routes}
-        for route in ("/dashboard","/revenue","/members","/imports"):
+        for route in ("/dashboard","/reports","/revenue","/members","/imports"):
             self.assertIn(route,route_paths);self.assertIn(route,script)
-        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
-        for anchor in ("retention-health","payment-recovery","action-center"):
-            self.assertIn(f'id="{anchor}"',dashboard);self.assertIn(f'/dashboard#{anchor}',script)
+        for label,route in (("Dashboard","/dashboard"),("Revenue","/revenue"),("Members","/members"),("Reports","/reports"),("Imports","/imports")):
+            self.assertIn(f'navItem("{label}","{route}"',script)
+        for label in ("Retention","Payment Recovery","Action Center"):
+            self.assertNotIn(f'navItem("{label}"',script)
         for fake in ("/leads","/clients","/billing","/workflows","/forecast"):
             self.assertNotIn(fake,script)
 
-    def test_navigation_active_state_tracks_routes_hashes_and_dashboard_scroll(self):
+    def test_navigation_active_state_is_route_based_and_not_scroll_driven(self):
         script=(ROOT/"static/ui.js").read_text(encoding="utf-8")
-        for route in ('/revenue','/members','/imports'):
-            self.assertIn(f'navItem("{route.strip("/").title()}"',script)
-        for section in ('retention-health','payment-recovery','action-center'):
-            self.assertIn(f'/dashboard#{section}',script)
-        self.assertIn('setActiveNavigation',script)
-        self.assertIn('removeAttribute("aria-current")',script)
-        self.assertIn('window.addEventListener("hashchange",syncNavigationState)',script)
-        self.assertIn('IntersectionObserver',script)
-        self.assertIn('observer.observe(item.section)',script)
+        self.assertIn('location.pathname.startsWith("/members/")?"/members":location.pathname',script)
+        self.assertNotIn('location.hash',script);self.assertNotIn('hashchange',script)
+        self.assertNotIn('IntersectionObserver',script);self.assertNotIn('setActiveNavigation',script)
+        self.assertIn('if(currentNavigationHref()===href)link.setAttribute("aria-current","page")',script)
         self.assertIn('closeDrawer',script)
+
+    def test_dashboard_quick_navigation_targets_existing_sections(self):
+        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        targets=(("Overview","dashboard-overview"),("Retention Health","retention-health"),("Payment Recovery","payment-recovery"),("Action Center","action-center"),("Follow-Ups","follow-ups"))
+        self.assertIn('class="dashboard-quick-nav"',dashboard)
+        for label,target in targets:
+            self.assertIn(f'href="#{target}"',dashboard);self.assertIn(f'id="{target}"',dashboard);self.assertIn(label,dashboard)
+        self.assertIn('overflow-x:auto',css);self.assertIn('.dashboard-quick-nav a:focus-visible',css)
+        self.assertIn('@media (max-width:640px) { .dashboard-quick-nav',css)
 
     def test_theme_and_mobile_navigation_controls_are_accessible(self):
         script=(ROOT/"static/ui.js").read_text(encoding="utf-8")
@@ -132,6 +138,19 @@ class UIModernizationTests(unittest.TestCase):
         self.assertIn('data-import-type="revenue"',rendered)
         self.assertIn("Import Revenue",rendered)
         self.assertNotIn("Revenue import unavailable",rendered)
+
+    def test_reports_workspace_navigation_theme_and_mobile_contract(self):
+        template=(ROOT/"templates/reports.html").read_text(encoding="utf-8")
+        script=(ROOT/"static/reports.js").read_text(encoding="utf-8")
+        nav=(ROOT/"static/ui.js").read_text(encoding="utf-8")
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        self.assertIn('navItem("Reports","/reports","reports")',nav)
+        self.assertIn('href="/reports" aria-current="page"',template)
+        for value in ("this_month","last_month","last_3_months","last_6_months"):
+            self.assertIn(f'data-reports-range="{value}"',template)
+        self.assertIn('"Not available"',script);self.assertIn('RevenueTransaction',script)
+        self.assertIn('background:var(--surface-elevated)',css);self.assertIn('color:var(--text)',css)
+        self.assertIn('@media (max-width:640px)',css);self.assertIn('aria-pressed',template)
 
 
 if __name__=="__main__": unittest.main()

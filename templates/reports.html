@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Reports | MyFit Analytics</title><link rel="stylesheet" href="/static/style.css"><script src="/static/ui.js"></script></head>
+<body data-page="reports" data-page-title="Reports">
+<main class="dashboard reports-workspace" data-studio-id="{{ studio_id }}" data-currency="{{ currency }}">
+<header class="dashboard-header"><div><h1>MyFit Analytics</h1><p>{{ studio_name }}</p></div><nav class="dashboard-user-area" aria-label="Primary navigation"><a class="settings-button" href="/dashboard">Dashboard</a><a class="settings-button" href="/reports" aria-current="page">Reports</a><a class="settings-button" href="/revenue">Revenue</a><a class="settings-button" href="/members">Members</a>{% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Imports</a>{% endif %}<span>{{ user_email }} · {{ user_role | title }}</span><form method="post" action="/logout"><button class="settings-button" type="submit">Logout</button></form></nav></header>
+<section class="panel reports-heading"><div><p class="card-label">Management analytics</p><h2>Studio Reports</h2><p>Percentages, trends, and studio health for management review.</p></div><div class="reports-range-controls" aria-label="Report date range"><button type="button" data-reports-range="this_month" class="active" aria-pressed="true">This Month</button><button type="button" data-reports-range="last_month" aria-pressed="false">Last Month</button><button type="button" data-reports-range="last_3_months" aria-pressed="false">Last 3 Months</button><button type="button" data-reports-range="last_6_months" aria-pressed="false">Last 6 Months</button></div><p id="reports-range-label" class="settings-status" aria-live="polite">Loading report…</p></section>
+<div id="reports-sections" class="reports-sections" aria-live="polite"></div>
+</main><script src="/static/reports.js"></script>
+</body></html>
