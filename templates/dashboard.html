@@ -1191,7 +1191,7 @@
             const inactivity = document.createElement("p");
             inactivity.textContent = inactivityText;
             const status = document.createElement("span");
-            status.className = "retention-status";
+            status.className = `retention-status crm-status crm-status-${member.status}`;
             status.textContent = member.status.replace("_", " ");
             memberInfo.append(memberLink, inactivity);
             item.append(memberInfo, status);

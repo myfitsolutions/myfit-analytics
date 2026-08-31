@@ -67,6 +67,17 @@ class UIModernizationTests(unittest.TestCase):
         self.assertIn('gross_revenue_available',revenue_js)
         self.assertIn('"Not available"',revenue_js)
 
+    def test_retention_badges_use_shared_theme_status_colors(self):
+        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        self.assertIn('retention-status crm-status crm-status-${member.status}',dashboard)
+        self.assertIn('--at-risk: #fb923c',css)
+        self.assertIn('--at-risk: #c2410c',css)
+        for status in ('healthy','watch','at_risk','critical'):
+            self.assertIn(f'.crm-status-{status}',css)
+        self.assertIn('background: var(--surface-elevated)',css)
+        self.assertNotIn('background: #eeeeee',css)
+
     def test_revenue_import_card_explains_platform_prerequisite(self):
         template=templates.env.get_template("imports.html")
         context={"studio_id":1,"studio_name":"Test","user_email":"owner@test","user_role":"owner"}

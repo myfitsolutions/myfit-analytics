@@ -636,7 +636,9 @@ body {
 
     text-transform: capitalize;
 
-    background: #eeeeee;
+    border: 1px solid var(--border);
+    background: var(--surface-elevated);
+    color: var(--text-secondary);
 }
 
 
@@ -1774,6 +1776,7 @@ body.modal-open {
     --teal: #2dd4bf;
     --success: #34d399;
     --warning: #fbbf24;
+    --at-risk: #fb923c;
     --danger: #fb7185;
     --chart-grid: rgba(148, 163, 184, .12);
     --shadow-sm: 0 8px 26px rgba(0, 0, 0, .18);
@@ -1803,6 +1806,7 @@ body.modal-open {
     --teal: #0f9f8d;
     --success: #059669;
     --warning: #b7791f;
+    --at-risk: #c2410c;
     --danger: #e11d48;
     --chart-grid: rgba(71, 85, 105, .12);
     --shadow-sm: 0 10px 30px rgba(38, 51, 77, .08);
@@ -1877,9 +1881,10 @@ input::placeholder,textarea::placeholder { color:var(--text-muted); }select opti
 .crm-search-label,.message-label,.member-import-form label,.settings-form label { color:var(--text-secondary); }
 
 .crm-status,.activity-badge,.action-history-badge,.revenue-kind,.revenue-kind-refund { border-width:1px; border-style:solid; border-radius:999px; font-weight:800; letter-spacing:.03em; }
-.crm-status-healthy,.retention-healthy,.status-paid { border-color:rgba(52,211,153,.3); background:rgba(52,211,153,.1); color:var(--success); }
-.crm-status-watch,.retention-watch,.status-open { border-color:rgba(251,191,36,.3); background:rgba(251,191,36,.1); color:var(--warning); }
-.crm-status-at_risk,.crm-status-critical,.crm-payment-issue,.status-failed,.revenue-kind-refund { border-color:rgba(251,113,133,.3); background:rgba(251,113,133,.1); color:var(--danger)!important; }
+.crm-status-healthy,.retention-healthy,.status-paid { border-color:color-mix(in srgb,var(--success) 38%,transparent); background:color-mix(in srgb,var(--success) 12%,transparent); color:var(--success); }
+.crm-status-watch,.retention-watch,.status-open { border-color:color-mix(in srgb,var(--warning) 38%,transparent); background:color-mix(in srgb,var(--warning) 12%,transparent); color:var(--warning); }
+.crm-status-at_risk { border-color:color-mix(in srgb,var(--at-risk) 38%,transparent); background:color-mix(in srgb,var(--at-risk) 12%,transparent); color:var(--at-risk); }
+.crm-status-critical,.crm-payment-issue,.status-failed,.revenue-kind-refund { border-color:color-mix(in srgb,var(--danger) 38%,transparent); background:color-mix(in srgb,var(--danger) 12%,transparent); color:var(--danger)!important; }
 .revenue-kind { border-color:rgba(45,212,191,.3); background:rgba(45,212,191,.1); color:var(--teal); }
 
 .action-item { border:1px solid var(--border); border-radius:var(--radius-md); background:linear-gradient(120deg,var(--surface-elevated),transparent); padding:18px; }
