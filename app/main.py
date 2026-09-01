@@ -1,7 +1,6 @@
 import csv
 import io
 import json
-import os
 import re
 import uuid
 from collections import defaultdict
@@ -51,7 +50,8 @@ from app.services.attendance import ATTENDANCE_MILESTONES, get_attendance_aggreg
 from app.services.data_sources import get_data_trust_summary, get_dataset_availability, get_primary_data_source, serialize_data_source, set_primary_platform
 from app.platforms import PLATFORMS, get_import_profile
 from app.services.revenue import normalize_revenue_row, parse_revenue_date
-from app.services.automations import AutomationsClient, member_fact, payment_fact
+from app.services.automations import (AutomationsClient, EnvironmentCredentialProvider,
+    OutboxService, member_fact, payment_fact)
 from app.auth import (
     get_current_user,
     normalize_email,
@@ -2519,14 +2519,15 @@ def rollback_import_batch(
 
 
 @app.get("/integrations/myfit-automations")
-def automations_workspace(request: Request, db: Session = Depends(get_db)):
+def automations_workspace(request: Request, status: str | None = Query(None), db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     if not user:
         return RedirectResponse("/login", status_code=303)
     integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=user.studio_id).first()
-    deliveries = db.query(AutomationsDelivery).filter_by(analytics_studio_id=user.studio_id).order_by(
-        AutomationsDelivery.last_attempt_at.desc()).limit(20).all()
-    credential_configured = bool(integration and os.getenv(integration.credential_env_var))
+    query=db.query(AutomationsDelivery).filter_by(analytics_studio_id=user.studio_id)
+    if status in {"pending","failed","delivered"}: query=query.filter(AutomationsDelivery.delivery_status==status)
+    deliveries = query.order_by(AutomationsDelivery.created_at.desc()).limit(100).all()
+    credential_configured = bool(integration and EnvironmentCredentialProvider().get_automations_bearer_token(integration))
     return templates.TemplateResponse(request=request, name="automations_integration.html", context={
         "integration": integration, "deliveries": deliveries, "credential_configured": credential_configured,
         "user_email": user.email, "user_role": user.role, "studio_id": user.studio_id})
@@ -2578,10 +2579,28 @@ def sync_automations_facts(studio_id: int, kind: Literal["retention", "reactivat
             considered += 1; fact = payment_fact(payment, integration.automations_studio_id, now)
             if fact: facts.append(fact)
             else: skipped += 1
-    deliveries = [AutomationsClient().deliver(db, integration, fact) for fact in facts]
-    accepted = sum(item.delivery_status == "accepted" for item in deliveries)
-    return {"considered": considered, "sent": len(deliveries), "skipped_insufficient_data": skipped,
-            "accepted": accepted, "rejected": len(deliveries)-accepted}
+    queued=[OutboxService().enqueue(db,integration,fact) for fact in facts]
+    return {"considered":considered,"queued":sum(created for _,created in queued),
+            "reused":sum(not created for _,created in queued),"skipped_insufficient_data":skipped}
+
+
+@app.post("/studios/{studio_id}/integrations/myfit-automations/deliver-pending")
+def deliver_pending_automations(studio_id:int,user:User=Depends(require_automations_sync),db:Session=Depends(get_db)):
+    integration=db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
+    if not integration: raise HTTPException(400,"Integration mapping is not configured")
+    items=OutboxService().deliver_pending(db,integration)
+    return {"attempted":len(items),"delivered":sum(i.delivery_status=="delivered" for i in items),
+            "failed":sum(i.delivery_status=="failed" for i in items)}
+
+
+@app.post("/studios/{studio_id}/integrations/myfit-automations/outbox/{delivery_id}/retry")
+def retry_automations_delivery(studio_id:int,delivery_id:int,user:User=Depends(require_automations_sync),db:Session=Depends(get_db)):
+    integration=db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
+    item=db.query(AutomationsDelivery).filter_by(id=delivery_id,analytics_studio_id=studio_id).first()
+    if not integration or not item: raise HTTPException(404,"Delivery not found")
+    OutboxService().retry(db,item)
+    result=OutboxService().deliver(db,integration,item)
+    return {"id":result.id,"status":result.delivery_status,"attempt_count":result.attempt_count}
 
 
 @app.get("/login")

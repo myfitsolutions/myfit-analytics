@@ -7,6 +7,7 @@ from app.migrate_attendance_milestones import run_migration as migrate_attendanc
 from app.migrate_studio_data_sources import run_migration as migrate_studio_data_sources
 from app.migrate_revenue_transactions import run_migration as migrate_revenue_transactions
 from app.migrate_automations_integration import run_migration as migrate_automations_integration
+from app.migrate_automations_outbox import run_migration as migrate_automations_outbox
 
 
 def run_all_migrations():
@@ -19,7 +20,8 @@ def run_all_migrations():
         ("attendance milestones", migrate_attendance_milestones),
         ("studio data sources", migrate_studio_data_sources),
         ("revenue transactions", migrate_revenue_transactions),
-        ("automations integration", migrate_automations_integration)
+        ("automations integration", migrate_automations_integration),
+        ("automations outbox", migrate_automations_outbox)
     ):
         print(f"Running {name} migration...")
         migration()
