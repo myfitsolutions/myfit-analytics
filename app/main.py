@@ -21,7 +21,6 @@ from app.config import settings
 from app.models import (
     ActionHistory,
     ActionStatus,
-    Base,
     Booking,
     FollowUp,
     ImportBatch,
@@ -66,9 +65,6 @@ from app.auth import (
     require_studio_user,
     verify_password
 )
-
-if not settings.is_production:
-    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="MyFit Analytics API",
@@ -166,15 +162,6 @@ async def production_safety_middleware(request: Request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     return response
 
-
-@app.on_event("startup")
-def verify_production_database():
-    if settings.is_production:
-        try:
-            with engine.connect() as connection:
-                connection.execute(text("SELECT 1"))
-        except SQLAlchemyError:
-            raise RuntimeError("Production database readiness check failed") from None
 
 class StudioCreate(BaseModel):
     name: str
