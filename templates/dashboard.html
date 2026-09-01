@@ -501,6 +501,7 @@
         </div>
     </div>
 
+    <button id="dashboard-back-to-top" class="dashboard-back-to-top" type="button" aria-label="Back to top" title="Back to top" hidden><span aria-hidden="true">↑</span></button>
 
     <script src="/static/activity_history.js"></script>
     <script>
@@ -2379,6 +2380,17 @@
                 document.getElementById("revenue-change").textContent = "Unable to load dashboard totals";
             }
         }
+
+        const backToTopButton = document.getElementById("dashboard-back-to-top");
+        const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+        const updateBackToTopVisibility = () => {
+            backToTopButton.hidden = window.scrollY < 480;
+        };
+        window.addEventListener("scroll", updateBackToTopVisibility, { passive: true });
+        backToTopButton.addEventListener("click", () => {
+            window.scrollTo({ top: 0, behavior: reducedMotionQuery.matches ? "auto" : "smooth" });
+        });
+        updateBackToTopVisibility();
 
         initializeDashboard();
 

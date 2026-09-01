@@ -47,6 +47,24 @@ class UIModernizationTests(unittest.TestCase):
         self.assertIn('overflow-x:auto',css);self.assertIn('.dashboard-quick-nav a:focus-visible',css)
         self.assertIn('@media (max-width:640px) { .dashboard-quick-nav',css)
 
+    def test_dashboard_only_back_to_top_accessibility_motion_and_theme_contract(self):
+        dashboard=(ROOT/"templates/dashboard.html").read_text(encoding="utf-8")
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        self.assertIn('id="dashboard-back-to-top"',dashboard)
+        self.assertIn('type="button" aria-label="Back to top" title="Back to top" hidden',dashboard)
+        self.assertIn('<span aria-hidden="true">↑</span>',dashboard)
+        self.assertIn('window.scrollY < 480',dashboard)
+        self.assertIn('window.addEventListener("scroll", updateBackToTopVisibility, { passive: true })',dashboard)
+        self.assertIn('window.scrollTo({ top: 0, behavior: reducedMotionQuery.matches ? "auto" : "smooth" })',dashboard)
+        self.assertIn('window.matchMedia("(prefers-reduced-motion: reduce)")',dashboard)
+        for page in ("revenue.html","members.html","member_detail.html","reports.html","imports.html","onboarding.html","login.html"):
+            self.assertNotIn('dashboard-back-to-top',(ROOT/"templates"/page).read_text(encoding="utf-8"))
+        self.assertIn('.dashboard-back-to-top { position:fixed; right:24px; bottom:24px;',css)
+        self.assertIn('background:linear-gradient(145deg,var(--purple),var(--indigo))',css)
+        self.assertIn('.dashboard-back-to-top:hover',css)
+        self.assertIn('.dashboard-back-to-top:focus-visible',css)
+        self.assertIn('@media (max-width:640px) { .dashboard-back-to-top { right:14px; bottom:18px; width:48px; height:48px; } }',css)
+
     def test_theme_and_mobile_navigation_controls_are_accessible(self):
         script=(ROOT/"static/ui.js").read_text(encoding="utf-8")
         self.assertIn("myfit-analytics-theme",script);self.assertIn('dataset.theme',script)
