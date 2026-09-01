@@ -79,7 +79,14 @@
             count.textContent = `${visible.length} of ${members.length} members`;
 
             if (!visible.length) {
-                list.appendChild(textElement("p", "crm-empty", "No members match this search or filter."));
+                if (!members.length) {
+                    list.appendChild(textElement("p", "crm-empty", "No member data yet. Import members to build your member base and unlock retention analysis."));
+                    if (document.getElementById("open-member-import")) {
+                        const action = textElement("a", "settings-button", "Import Members");
+                        action.href = "/imports#import-members";
+                        list.appendChild(action);
+                    }
+                } else list.appendChild(textElement("p", "crm-empty", "No members match this search or filter."));
                 return;
             }
 

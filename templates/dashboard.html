@@ -64,7 +64,7 @@
         {% if not has_data %}
         <section class="panel dashboard-empty-guidance">
             <h2>No studio data yet</h2>
-            <p>Import member, booking, and payment data to start seeing retention and revenue insights.</p>
+            <p>Import members and bookings for engagement insights, payments for payment health, and revenue for financial reporting.</p>
             {% if user_role in ["owner", "manager"] %}<a class="settings-button" href="/imports">Import Data</a>{% else %}<p>Ask an Owner or Manager to import studio data.</p>{% endif %}
         </section>
         {% endif %}

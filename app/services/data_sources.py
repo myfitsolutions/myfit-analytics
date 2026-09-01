@@ -75,6 +75,12 @@ def get_data_trust_summary(db, studio_id):
         name: db.query(func.count(model.id)).filter(model.studio_id == studio_id).scalar()
         for name, model in models.items()
     }
+    latest_record_dates = {
+        "members": None,
+        "bookings": db.query(func.max(Booking.booking_date)).filter(Booking.studio_id == studio_id).scalar(),
+        "payments": db.query(func.max(Payment.payment_date)).filter(Payment.studio_id == studio_id).scalar(),
+        "revenue": db.query(func.max(RevenueTransaction.analytics_date)).filter(RevenueTransaction.studio_id == studio_id).scalar(),
+    }
     batches = {}
     for import_type in models:
         batch = (
@@ -103,6 +109,7 @@ def get_data_trust_summary(db, studio_id):
                 "available": bool(counts[name]),
                 "record_count": counts[name] or 0,
                 "last_imported_at": batches[name][0].created_at if batches[name] else None,
+                "latest_record_date": latest_record_dates[name],
                 "source": (
                     batches[name][1].display_name
                     if batches[name] and batches[name][1]

@@ -19,6 +19,11 @@
                 <form method="post" action="/logout"><button class="settings-button" type="submit">Logout</button></form>
             </nav>
         </header>
+        <section class="panel crm-panel import-readiness-panel" aria-labelledby="import-readiness-title">
+            <div class="crm-title"><div><p class="card-label">First client setup</p><h2 id="import-readiness-title">Data Readiness</h2><p>Recommended order: Members → Bookings → Payments → Revenue</p></div></div>
+            <div id="import-readiness-grid" class="import-readiness-grid" aria-live="polite"><p class="crm-empty">Checking imported datasets...</p></div>
+            <div id="import-next-step" class="import-next-step" aria-live="polite"></div>
+        </section>
         <section class="panel crm-panel">
             <div class="crm-title"><div><h2>Data Sources</h2><p>Save recurring CSV source labels and assign existing mappings.</p></div><button id="add-source" class="settings-button" type="button">+ Add Data Source</button></div>
             <div id="source-list" class="source-list" aria-live="polite"><p class="crm-empty">Loading data sources...</p></div>
@@ -26,10 +31,10 @@
         <section class="panel crm-panel">
             <div class="crm-title"><div><h2>Data Import Center</h2><p>Import members, bookings, payments, and supported revenue exports from CSV.</p></div></div>
             <div class="import-type-grid">
-                <article><h3>Members</h3><p>Required: First Name, Last Name, Email<br>Optional: Status, Last Visit</p><button class="settings-button" type="button" data-import-type="members">Import Members</button></article>
-                <article><h3>Bookings</h3><p>Required: Member Email, Class Name, Booking Date, Status</p><button class="settings-button" type="button" data-import-type="bookings">Import Bookings</button></article>
-                {% if primary_platform == "hapana" %}<article><h3>Revenue</h3><p>Hapana Revenue V1 export. Net Revenue and a payment or invoice date are required.</p><button class="settings-button" type="button" data-import-type="revenue">Import Revenue</button></article>{% else %}<article class="import-type-unavailable"><h3>Revenue</h3><p>Hapana Revenue V1 requires Hapana as the Primary Platform. Configure it in Dashboard Settings under Data Sources.</p><button class="settings-button" type="button" disabled aria-disabled="true">Revenue import unavailable</button></article>{% endif %}
-                <article><h3>Payments</h3><p>Required: Member Email, Amount, Payment Date, Status</p><button class="settings-button" type="button" data-import-type="payments">Import Payments</button></article>
+                <article id="import-members"><p class="import-sequence">Step 1</p><h3>Members</h3><p>Build the member base used for retention analysis.</p><p class="import-requirements">Required: First Name, Last Name, Email. Optional: Status, Last Visit.</p><button class="settings-button" type="button" data-import-type="members">Import Members</button></article>
+                <article id="import-bookings"><p class="import-sequence">Step 2</p><h3>Bookings</h3><p>Unlock attendance and engagement insights.</p><p class="import-requirements">Required: Member Email, Class Name, Booking Date, Status.</p><button class="settings-button" type="button" data-import-type="bookings">Import Bookings</button></article>
+                <article id="import-payments"><p class="import-sequence">Step 3</p><h3>Payments</h3><p>Show payment health and failed-payment visibility.</p><p class="import-requirements">Required: Member Email, Amount, Payment Date, Status.</p><button class="settings-button" type="button" data-import-type="payments">Import Payments</button></article>
+                {% if primary_platform == "hapana" %}<article id="import-revenue"><p class="import-sequence">Step 4</p><h3>Revenue</h3><p>Enable transaction-level revenue reporting.</p><p class="import-requirements">Hapana Revenue V1 requires Net Revenue and a payment or invoice date.</p><button class="settings-button" type="button" data-import-type="revenue">Import Revenue</button></article>{% else %}<article id="import-revenue" class="import-type-unavailable"><p class="import-sequence">Step 4 · Optional</p><h3>Revenue</h3><p>Enable transaction-level revenue reporting.</p><p class="import-requirements">Hapana Revenue V1 requires Hapana as the Primary Platform. Configure it in Dashboard Settings under Data Sources.</p><button class="settings-button" type="button" disabled aria-disabled="true">Revenue import unavailable</button></article>{% endif %}
             </div>
             <div id="mapping-workflow" class="mapping-workflow" hidden>
                 <div class="import-progress"><strong>1 Upload</strong><span>2 Map</span><span>3 Validate</span><span>4 Import</span></div>
@@ -58,7 +63,7 @@
             <div id="preset-list" class="preset-list" aria-live="polite"><p class="crm-empty">Loading saved presets...</p></div>
         </section>
         <section class="panel crm-panel">
-            <div class="crm-title"><div><h2>Import History</h2><p>Member, booking, and payment CSV imports.</p></div></div>
+            <div class="crm-title"><div><h2>Import History</h2><p>Member, booking, payment, and revenue CSV imports.</p></div></div>
             <div id="import-history-list" class="import-history-list" aria-live="polite"><p class="crm-empty">Loading import history...</p></div>
         </section>
     </main>

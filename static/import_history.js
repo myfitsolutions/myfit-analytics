@@ -16,6 +16,7 @@
     let activeSource = null;
     let editingSource = null;
     let launchingSource = false;
+    let importReadiness = null;
 
     function element(tag, className, text) {
         const node = document.createElement(tag);
@@ -34,6 +35,51 @@
     }
     function formatDate(value) {
         return value ? new Date(value).toLocaleString() : "—";
+    }
+    function formatBusinessDate(value) {
+        return value ? new Date(value).toLocaleDateString(undefined, {year: "numeric", month: "short", day: "numeric"}) : null;
+    }
+    function nextStepAction(step, className = "settings-button") {
+        const action = element("a", className, step.title);
+        action.href = step.href;
+        if (step.href.startsWith("#import-")) action.addEventListener("click", event => {
+            const type = step.href.replace("#import-", "");
+            const button = document.querySelector(`[data-import-type='${type}']`);
+            if (button) { event.preventDefault(); button.click(); document.getElementById("mapping-workflow").scrollIntoView({behavior: "smooth", block: "start"}); }
+        });
+        return action;
+    }
+    function renderReadiness(readiness) {
+        importReadiness = readiness;
+        const grid = document.getElementById("import-readiness-grid");
+        grid.replaceChildren();
+        readiness.datasets.forEach(dataset => {
+            const card = document.createElement("article");
+            card.className = `import-readiness-card import-readiness-${dataset.status}`;
+            const status = dataset.status === "imported" ? "Imported" : "Not imported";
+            card.append(element("p", "import-sequence", `Step ${dataset.position}`), element("h3", "", dataset.name[0].toUpperCase() + dataset.name.slice(1)), element("span", "crm-status", status), element("p", "", dataset.description));
+            if (dataset.status === "imported") card.append(element("strong", "", `${dataset.record_count} record${dataset.record_count === 1 ? "" : "s"}`));
+            if (dataset.latest_record_date) card.append(element("small", "", `Data through ${formatBusinessDate(dataset.latest_record_date)}`));
+            if (dataset.last_imported_at) card.append(element("small", "", `Imported ${formatDate(dataset.last_imported_at)}${dataset.source ? ` · ${dataset.source}` : ""}`));
+            grid.append(card);
+        });
+        const target = document.getElementById("import-next-step"), step = readiness.next_step;
+        target.replaceChildren();
+        const copy = document.createElement("div"); copy.append(element("p", "card-label", "Next step"), element("h3", "", step.title), element("p", "", step.description));
+        target.append(copy, nextStepAction(step, "modal-button modal-button-primary"));
+        if (step.type === "review_dashboard") { const reports = element("a", "modal-button", "Review Reports"); reports.href = "/reports"; target.append(reports); }
+    }
+    async function loadReadiness() {
+        try { const data = await request("/data-sources"); renderReadiness(data.import_readiness); }
+        catch (_) { document.getElementById("import-readiness-grid").replaceChildren(element("p", "crm-empty error-state", "Unable to load data readiness.")); }
+    }
+    function renderPostImportGuidance() {
+        if (!importReadiness) return;
+        const result = document.getElementById("mapping-result"), guidance = document.createElement("aside"), step = importReadiness.next_step;
+        guidance.className = "import-post-guidance";
+        guidance.append(element("strong", "", "What’s next"), element("p", "", step.description), nextStepAction(step));
+        if (step.type === "review_dashboard") { const reports = element("a", "settings-button", "Review Reports"); reports.href = "/reports"; guidance.append(reports); }
+        result.append(guidance);
     }
     function currentMapping() {
         const mapping = {};
@@ -289,6 +335,8 @@
             document.getElementById("execute-import").hidden = true;
             await loadHistory();
             await loadSources();
+            await loadReadiness();
+            renderPostImportGuidance();
         } catch (error) {
             status.textContent = error.message;
             status.className = "settings-status settings-status-error";
@@ -398,4 +446,9 @@
     loadHistory();
     loadPresets();
     loadSources();
+    loadReadiness();
+    if (location.hash.startsWith("#import-")) {
+        const button = document.querySelector(`[data-import-type='${location.hash.replace("#import-", "")}']`);
+        if (button) button.click();
+    }
 })();

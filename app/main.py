@@ -2609,17 +2609,53 @@ def build_data_source_status(db, studio_id):
         item["last_import_at"] = last_import_by_source.get(source.id)
         serialized.append(item)
     primary = next((item for item in serialized if item["is_primary"] and item["is_active"]), None)
+    data_trust = get_data_trust_summary(db, studio_id)
+    readiness = build_import_readiness(data_trust, primary)
     return {
         "studio_id": studio_id,
         "primary_source": primary,
         "sources": serialized,
         "availability": get_dataset_availability(db, studio_id),
-        "data_trust": get_data_trust_summary(db, studio_id),
+        "data_trust": data_trust,
+        "import_readiness": readiness,
         "platforms": [
             {"key": key, **definition}
             for key, definition in PLATFORMS.items()
         ],
     }
+
+
+def build_import_readiness(data_trust, primary_source):
+    descriptions = {
+        "members": "Member base and retention analysis",
+        "bookings": "Attendance and engagement insights",
+        "payments": "Payment health and failed-payment visibility",
+        "revenue": "Transaction-level revenue reporting",
+    }
+    datasets = []
+    for position, name in enumerate(("members", "bookings", "payments", "revenue"), 1):
+        trusted = data_trust["datasets"][name]
+        datasets.append({
+            "name": name,
+            "position": position,
+            "description": descriptions[name],
+            "status": "imported" if trusted["available"] else "not_imported",
+            "record_count": trusted["record_count"],
+            "latest_record_date": trusted["latest_record_date"],
+            "last_imported_at": trusted["last_imported_at"],
+            "source": trusted["source"],
+        })
+    missing = next((item for item in datasets[:3] if item["status"] == "not_imported"), None)
+    revenue = datasets[3]
+    if missing:
+        next_step = {"type": f"import_{missing['name']}", "title": f"Import {missing['name'].title()}", "description": missing["description"], "href": f"#import-{missing['name']}"}
+    elif revenue["status"] == "not_imported" and primary_source and primary_source["platform"] == "hapana":
+        next_step = {"type": "import_revenue", "title": "Import Revenue", "description": descriptions["revenue"], "href": "#import-revenue"}
+    elif revenue["status"] == "not_imported":
+        next_step = {"type": "review_dashboard", "title": "Review Dashboard", "description": "Core operational data is ready. Revenue reporting remains optional until a supported revenue source is configured.", "href": "/dashboard"}
+    else:
+        next_step = {"type": "review_dashboard", "title": "Review Dashboard and Reports", "description": "All supported datasets are available for analysis.", "href": "/dashboard"}
+    return {"datasets": datasets, "next_step": next_step}
 
 
 @app.get("/studios/{studio_id}/data-sources")
