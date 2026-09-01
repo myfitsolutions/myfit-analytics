@@ -33,6 +33,21 @@ python -m app.migrate
 
 Neither command drops tables or deletes application data. Production application startup continues to perform no schema creation.
 
+### Disposable PostgreSQL integration tests
+
+The PostgreSQL outbox gate uses only `TEST_POSTGRES_URL` and refuses non-local database hosts. Prepare a fresh disposable database before running it:
+
+```text
+$env:TEST_POSTGRES_URL="postgresql://...@127.0.0.1:55433/..."
+$env:DATABASE_URL=$env:TEST_POSTGRES_URL
+python -m app.bootstrap_database
+python -m app.migrate
+Remove-Item Env:DATABASE_URL
+python -m pytest tests/test_postgresql_outbox.py -v -rs
+```
+
+Bootstrap and migration require the temporary `DATABASE_URL` assignment because those trusted-shell commands use the normal database setting. Remove it before testing. The tests themselves create uniquely named studios, integrations, deliveries, and attempts, then remove them through studio-scoped cascading cleanup. They never read `.env` or use `DATABASE_URL` for the PostgreSQL gate.
+
 ## Environment variables
 
 Required in production:
