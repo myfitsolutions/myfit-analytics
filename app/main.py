@@ -3829,6 +3829,99 @@ def report_percentage(value, denominator):
     return round(value * 100 / denominator, 2) if denominator else 0
 
 
+def report_metric(value, status="neutral", supporting_text=None, snapshot=None):
+    return {
+        "available": value is not None,
+        "value": value,
+        "status": status if value is not None else "neutral",
+        "supporting_text": supporting_text,
+        "snapshot": snapshot,
+    }
+
+
+def build_report_health_summary_and_insights(studio, retention, attendance, member_activity, payments, revenue):
+    churn_count = churn_total = churn_risk = None
+    if retention:
+        churn_count = retention["statuses"]["at_risk"]["count"] + retention["statuses"]["critical"]["count"]
+        churn_total = retention["total_members_considered"]
+        churn_risk = report_percentage(churn_count, churn_total) if churn_total else None
+
+    def threshold_status(value, positive, warning):
+        if value is None:
+            return "neutral"
+        if value < positive:
+            return "positive"
+        if value < warning:
+            return "warning"
+        return "danger"
+
+    def direction_status(value, negative="warning"):
+        if value is None or value == 0:
+            return "neutral"
+        return "positive" if value > 0 else negative
+
+    attendance_rate = attendance["attendance_rate"] if attendance else None
+    booking_growth = attendance["booking_change_percentage"] if attendance else None
+    payment_failure_rate = payments["failed"]["percentage"] if payments else None
+    revenue_growth = revenue["change_percentage"] if revenue else None
+    revenue_per_member = revenue["revenue_per_active_member"] if revenue else None
+    summary = {
+        "churn_risk": report_metric(
+            churn_risk, threshold_status(churn_risk, 15, 30),
+            f"{churn_count} of {churn_total} members" if churn_risk is not None else None,
+            "Current retention snapshot" if churn_risk is not None else None,
+        ),
+        "attendance_rate": report_metric(
+            attendance_rate,
+            "positive" if attendance_rate is not None and attendance_rate >= 90 else "warning" if attendance_rate is not None and attendance_rate >= 80 else "danger",
+        ),
+        "booking_growth": report_metric(booking_growth, direction_status(booking_growth)),
+        "payment_failure_rate": report_metric(payment_failure_rate, threshold_status(payment_failure_rate, 3, 7)),
+        "revenue_growth": report_metric(revenue_growth, direction_status(revenue_growth)),
+        "revenue_per_active_member": report_metric(revenue_per_member),
+    }
+
+    insights = []
+    if retention and churn_count:
+        critical = retention["statuses"]["critical"]["count"]
+        message = f"{churn_count} of {churn_total} active members ({churn_risk:.1f}%) are currently At Risk or Critical."
+        if critical:
+            message += f" {critical} {'member is' if critical == 1 else 'members are'} currently Critical."
+        insights.append({"category": "Retention", "title": "Retention needs attention", "message": message, "severity": "urgent" if critical else "warning"})
+    if payments and payments["failed"]["count"]:
+        failed = payments["failed"]["count"]
+        message = f"{failed} failed {'payment was' if failed == 1 else 'payments were'} recorded in this period."
+        if payments["amount_needing_attention"]:
+            message += f" {studio.currency} {Decimal(payments['amount_needing_attention']):,.2f} currently requires attention."
+        insights.append({"category": "Payments", "title": "Payment follow-up required", "message": message, "severity": "urgent"})
+    if attendance:
+        rate = attendance["attendance_rate"]
+        title = "Attendance is strong" if rate >= 90 else "Attendance needs attention" if rate < 80 else "Attendance is steady"
+        severity = "positive" if rate >= 90 else "warning" if rate < 80 else "informational"
+        insights.append({"category": "Attendance", "title": title, "message": f"{rate:.1f}% of bookings in the selected period were attended.", "severity": severity})
+        growth = attendance["booking_change_percentage"]
+        if growth is not None:
+            direction = "increased" if growth > 0 else "decreased" if growth < 0 else "were unchanged"
+            amount = f" {abs(growth):.1f}%" if growth else ""
+            insights.append({"category": "Bookings", "title": f"Bookings {direction}", "message": f"Bookings {direction}{amount} compared with the previous period.", "severity": "positive" if growth > 0 else "warning" if growth < 0 else "informational"})
+    if revenue and revenue["change_percentage"] is not None:
+        growth = revenue["change_percentage"]
+        direction = "increased" if growth > 0 else "decreased" if growth < 0 else "was unchanged"
+        amount = f" {abs(growth):.1f}%" if growth else ""
+        insights.append({"category": "Revenue", "title": f"Revenue {direction}", "message": f"Net revenue {direction}{amount} compared with the previous period.", "severity": "positive" if growth > 0 else "warning" if growth < 0 else "informational"})
+    if member_activity and (member_activity["members_with_no_attendance"] or member_activity["members_with_declining_attendance"]):
+        no_attendance = member_activity["members_with_no_attendance"] or 0
+        declining = member_activity["members_with_declining_attendance"] or 0
+        messages = []
+        if no_attendance:
+            messages.append(f"{no_attendance} {'member has' if no_attendance == 1 else 'members have'} no recorded attended visits.")
+        if declining:
+            messages.append(f"{declining} active {'member has' if declining == 1 else 'members have'} declining attendance.")
+        title = "Member activity needs attention" if no_attendance and declining else "Members without attendance" if no_attendance else "Attendance is declining"
+        insights.append({"category": "Member Activity", "title": title, "message": " ".join(messages), "severity": "warning"})
+    return summary, insights[:6]
+
+
 @app.get("/studios/{studio_id}/analytics/reports")
 def get_reports_analytics(
     studio_id: int,
@@ -3936,9 +4029,13 @@ def get_reports_analytics(
             "gross_revenue": None, "by_type": revenue_groups(RevenueTransaction.revenue_type),
             "by_payment_method": revenue_groups(RevenueTransaction.payment_method),
         }
+    health_summary, insights = build_report_health_summary_and_insights(
+        studio, retention, attendance, member_activity, payments, revenue
+    )
     return {"studio_id": studio_id, "selected_range": range, "range": {"start": start_at, "end": end_at},
             "availability": availability, "retention": retention, "attendance": attendance,
-            "member_activity": member_activity, "payments": payments, "revenue": revenue}
+            "member_activity": member_activity, "payments": payments, "revenue": revenue,
+            "health_summary": health_summary, "insights": insights}
 
 
 @app.get("/studios/{studio_id}/analytics/revenue")

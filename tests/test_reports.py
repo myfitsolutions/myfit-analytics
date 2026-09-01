@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 os.environ["APP_ENV"]="development";os.environ["DATABASE_URL"]="sqlite:///:memory:";os.environ["SESSION_COOKIE_SECURE"]="false"
 from app.database import Base
-from app.main import get_reports_analytics, reports_page
+from app.main import build_report_health_summary_and_insights, get_reports_analytics, reports_page
 from app.models import Booking, Member, Payment, RevenueTransaction, Studio, User
 
 
@@ -59,6 +59,15 @@ class ReportsWorkspaceTests(unittest.TestCase):
         attendance=result["attendance"];self.assertEqual(attendance["total_bookings"],8);self.assertEqual(attendance["attended"]["count"],5);self.assertEqual(attendance["attendance_rate"],62.5)
         self.assertEqual(result["payments"]["successful"]["percentage"],50);self.assertEqual(result["payments"]["failed"]["percentage"],50);self.assertEqual(result["payments"]["amount_needing_attention"],5)
         revenue=result["revenue"];self.assertEqual(revenue["source"],"RevenueTransaction");self.assertEqual(revenue["net_revenue"],Decimal("90"));self.assertEqual(revenue["transaction_count"],2);self.assertEqual(revenue["refund_count"],1);self.assertIsNone(revenue["gross_revenue"])
+        summary=result["health_summary"]
+        self.assertEqual(summary["churn_risk"]["value"],50)
+        self.assertEqual(summary["churn_risk"]["supporting_text"],"2 of 4 members")
+        self.assertEqual(summary["churn_risk"]["snapshot"],"Current retention snapshot")
+        self.assertEqual(summary["attendance_rate"]["value"],attendance["attendance_rate"])
+        self.assertEqual(summary["booking_growth"]["value"],attendance["booking_change_percentage"])
+        self.assertEqual(summary["payment_failure_rate"]["value"],50)
+        self.assertEqual(summary["revenue_per_active_member"]["value"],revenue["revenue_per_active_member"])
+        self.assertEqual(summary["revenue_growth"]["value"],revenue["change_percentage"])
 
     def test_unavailable_datasets_are_distinct_from_valid_period_zeroes(self):
         empty=get_reports_analytics(1,"this_month",self.user,self.db)
@@ -70,5 +79,48 @@ class ReportsWorkspaceTests(unittest.TestCase):
         self.assertEqual(result["attendance"]["total_bookings"],0);self.assertEqual(result["attendance"]["attendance_rate"],0)
         self.assertEqual(result["payments"]["total"],0);self.assertEqual(result["payments"]["successful"]["percentage"],0)
         self.assertEqual(result["revenue"]["net_revenue"],0);self.assertEqual(result["revenue"]["transaction_count"],0)
+        self.assertEqual(result["health_summary"]["attendance_rate"]["value"],0)
+        self.assertEqual(result["health_summary"]["payment_failure_rate"]["value"],0)
+        self.assertIsNone(result["health_summary"]["booking_growth"]["value"])
+        self.assertIsNone(result["health_summary"]["revenue_growth"]["value"])
+
+    def test_missing_datasets_make_summary_unavailable_without_insights(self):
+        result=get_reports_analytics(1,"this_month",self.user,self.db)
+        self.assertTrue(all(not metric["available"] for metric in result["health_summary"].values()))
+        self.assertEqual(result["insights"],[])
+
+    def test_deterministic_insight_rules(self):
+        self.studio.currency="PHP"
+        retention={"snapshot":"Current snapshot","total_members_considered":10,"statuses":{
+            "healthy":{"count":3},"watch":{"count":4},"at_risk":{"count":2},"critical":{"count":1}}}
+        attendance={"attendance_rate":93.0,"booking_change_percentage":22.9}
+        activity={"members_with_no_attendance":2,"members_with_declining_attendance":1}
+        payments={"failed":{"count":2,"percentage":4.65},"amount_needing_attention":Decimal("218")}
+        revenue={"change_percentage":4.4,"revenue_per_active_member":Decimal("116.72")}
+        summary,insights=build_report_health_summary_and_insights(self.studio,retention,attendance,activity,payments,revenue)
+        self.assertEqual(summary["churn_risk"]["value"],30)
+        self.assertEqual(summary["churn_risk"]["status"],"danger")
+        self.assertEqual(summary["booking_growth"]["value"],22.9)
+        self.assertEqual(summary["payment_failure_rate"]["value"],4.65)
+        by_category={item["category"]:item for item in insights}
+        self.assertIn("1 member is currently Critical",by_category["Retention"]["message"])
+        self.assertIn("2 failed payments",by_category["Payments"]["message"])
+        self.assertIn("PHP 218.00 currently requires attention",by_category["Payments"]["message"])
+        self.assertEqual(by_category["Revenue"]["title"],"Revenue increased")
+        self.assertIn("4.4%",by_category["Revenue"]["message"])
+        self.assertEqual(by_category["Bookings"]["title"],"Bookings increased")
+        self.assertEqual(by_category["Attendance"]["title"],"Attendance is strong")
+
+        revenue["change_percentage"]=-8.25
+        _,negative=build_report_health_summary_and_insights(self.studio,None,None,None,None,revenue)
+        self.assertEqual(negative[0]["title"],"Revenue decreased")
+        self.assertIn("8.2%",negative[0]["message"])
+
+    def test_member_activity_insights_are_not_invented_when_data_is_missing(self):
+        activity={"members_with_no_attendance":3,"members_with_declining_attendance":2}
+        _,insights=build_report_health_summary_and_insights(self.studio,None,None,activity,None,None)
+        self.assertEqual([item["title"] for item in insights],["Member activity needs attention"])
+        self.assertIn("3 members have no recorded attended visits",insights[0]["message"])
+        self.assertIn("2 active members have declining attendance",insights[0]["message"])
 
 if __name__=="__main__": unittest.main()

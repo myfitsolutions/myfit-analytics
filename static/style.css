@@ -1959,11 +1959,19 @@ input:disabled,select:disabled,textarea:disabled,input[readonly],textarea[readon
 .report-metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
 .report-metric { display:grid; align-content:start; gap:6px; min-height:108px; padding:16px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-elevated); }
 .report-metric strong { color:var(--text); font-size:1.55rem; line-height:1.15; }.report-metric small { line-height:1.4; }
+.report-health-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.report-health-card { position:relative; display:grid; align-content:start; gap:7px; min-width:0; padding:16px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface-elevated); }
+.report-health-card::before { content:""; position:absolute; inset:0 auto 0 0; width:4px; border-radius:var(--radius-sm) 0 0 var(--radius-sm); background:var(--text-muted); }
+.report-health-card strong { color:var(--text); font-size:1.55rem; }.report-health-card small { color:var(--text-secondary); }
+.report-health-positive::before { background:var(--success); }.report-health-warning::before { background:var(--warning); }.report-health-danger::before { background:var(--danger); }.report-health-neutral::before { background:var(--accent); }
+.report-snapshot,.report-insight-severity { width:max-content; max-width:100%; padding:3px 7px; border:1px solid var(--border); border-radius:999px; color:var(--text-secondary); background:var(--app-bg-soft); font-size:11px; font-weight:700; text-transform:capitalize; }
+.report-insight-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }.report-insight { display:grid; gap:7px; padding:16px; border:1px solid var(--border); border-left:4px solid var(--accent); border-radius:var(--radius-sm); background:var(--surface-elevated); }.report-insight h3,.report-insight p { margin:0; }.report-insight>p:not(.card-label) { color:var(--text-secondary); line-height:1.5; }.report-insight-positive { border-left-color:var(--success); }.report-insight-warning { border-left-color:var(--warning); }.report-insight-urgent { border-left-color:var(--danger); }
 .report-progress { display:block; overflow:hidden; height:7px; margin-top:5px; border-radius:999px; background:var(--border); }.report-progress i { display:block; height:100%; border-radius:inherit; background:var(--accent); }
 .report-progress-healthy i { background:var(--success); }.report-progress-watch i { background:var(--warning); }.report-progress-at_risk i { background:var(--at-risk); }.report-progress-critical i { background:var(--danger); }
 .report-breakdowns { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; margin-top:16px; }.report-breakdown { padding:16px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--app-bg-soft); }.report-breakdown>div { display:flex; justify-content:space-between; gap:16px; padding:9px 0; border-bottom:1px solid var(--border); }.report-breakdown>div:last-child { border-bottom:0; }
-@media (max-width:640px) { .dashboard-quick-nav { margin-top:-6px; padding-bottom:8px; }.reports-heading { align-items:stretch; }.reports-range-controls button { flex:1 1 45%; }.report-metrics { grid-template-columns:1fr 1fr; }.report-breakdowns { grid-template-columns:1fr; } }
-@media (max-width:420px) { .report-metrics { grid-template-columns:1fr; } }
+@media (max-width:900px) { .report-health-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:640px) { .dashboard-quick-nav { margin-top:-6px; padding-bottom:8px; }.reports-heading { align-items:stretch; }.reports-range-controls button { flex:1 1 45%; }.report-metrics,.report-health-grid { grid-template-columns:1fr 1fr; }.report-insight-grid,.report-breakdowns { grid-template-columns:1fr; } }
+@media (max-width:420px) { .report-metrics,.report-health-grid { grid-template-columns:1fr; } }
 
 /* Final Studio Settings theme contract. Keep after legacy form declarations. */
 .settings-form .settings-grid label,.settings-form .settings-follow-up-label { color:var(--text-secondary); }

@@ -174,6 +174,20 @@ class UIModernizationTests(unittest.TestCase):
         for value in ("this_month","last_month","last_3_months","last_6_months"):
             self.assertIn(f'data-reports-range="{value}"',template)
         self.assertIn('"Not available"',script);self.assertIn('RevenueTransaction',script)
+
+    def test_reports_health_summary_theme_accessibility_and_responsive_contract(self):
+        template=(ROOT/"templates/reports.html").read_text(encoding="utf-8")
+        script=(ROOT/"static/reports.js").read_text(encoding="utf-8")
+        css=(ROOT/"static/style.css").read_text(encoding="utf-8")
+        backend=(ROOT/"app/main.py").read_text(encoding="utf-8")
+        for label in ("Studio Health Summary","Management Insights"):
+            self.assertIn(label,script)
+        self.assertIn("Current retention snapshot",backend)
+        for token in ("var(--surface-elevated)","var(--text)","var(--success)","var(--warning)","var(--danger)","var(--accent)"):
+            self.assertIn(token,css)
+        self.assertIn(".report-health-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }",css)
+        self.assertIn(".report-metrics,.report-health-grid { grid-template-columns:1fr; }",css)
+        self.assertIn('card.setAttribute("data-status",item.status)',script)
         self.assertIn('background:var(--surface-elevated)',css);self.assertIn('color:var(--text)',css)
         self.assertIn('@media (max-width:640px)',css);self.assertIn('aria-pressed',template)
 
