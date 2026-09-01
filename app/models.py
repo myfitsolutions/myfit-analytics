@@ -390,3 +390,42 @@ class FollowUp(Base):
         onupdate=func.now()
     )
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AutomationsIntegration(Base):
+    __tablename__ = "automations_integrations"
+    __table_args__ = (UniqueConstraint("analytics_studio_id", name="uq_automations_integrations_studio"),)
+
+    id = Column(Integer, primary_key=True)
+    analytics_studio_id = Column(Integer, ForeignKey("studios.id", ondelete="CASCADE"), nullable=False, index=True)
+    automations_base_url = Column(String(500), nullable=False)
+    automations_studio_id = Column(String(36), nullable=False)
+    credential_env_var = Column(String(100), nullable=False, default="MYFIT_AUTOMATIONS_API_KEY")
+    integration_enabled = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class AutomationsDelivery(Base):
+    __tablename__ = "automations_deliveries"
+    __table_args__ = (
+        UniqueConstraint("analytics_studio_id", "idempotency_key", name="uq_automations_deliveries_request"),
+        Index("ix_automations_deliveries_studio_attempted", "analytics_studio_id", "last_attempt_at"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    analytics_studio_id = Column(Integer, ForeignKey("studios.id", ondelete="CASCADE"), nullable=False, index=True)
+    automations_studio_id = Column(String(36), nullable=False)
+    event_type = Column(String(50), nullable=False)
+    subject_id = Column(String(200), nullable=False)
+    correlation_id = Column(String(100), nullable=False)
+    idempotency_key = Column(String(128), nullable=False)
+    delivery_status = Column(String(30), nullable=False)
+    http_status = Column(Integer, nullable=True)
+    evaluation_id = Column(String(36), nullable=True)
+    runs_created = Column(Integer, nullable=False, default=0)
+    runs_reused = Column(Integer, nullable=False, default=0)
+    safe_error_code = Column(String(100), nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=1)
+    last_attempt_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import os
 import re
 import uuid
 from collections import defaultdict
@@ -21,6 +22,8 @@ from app.config import settings
 from app.models import (
     ActionHistory,
     ActionStatus,
+    AutomationsDelivery,
+    AutomationsIntegration,
     Booking,
     FollowUp,
     ImportBatch,
@@ -48,11 +51,13 @@ from app.services.attendance import ATTENDANCE_MILESTONES, get_attendance_aggreg
 from app.services.data_sources import get_data_trust_summary, get_dataset_availability, get_primary_data_source, serialize_data_source, set_primary_platform
 from app.platforms import PLATFORMS, get_import_profile
 from app.services.revenue import normalize_revenue_row, parse_revenue_date
+from app.services.automations import AutomationsClient, member_fact, payment_fact
 from app.auth import (
     get_current_user,
     normalize_email,
     hash_password,
     require_action_status_permission,
+    require_automations_sync,
     require_booking_import,
     require_current_user,
     require_email_permission,
@@ -2511,6 +2516,72 @@ def rollback_import_batch(
         "status": batch.status,
         "protected_records": protected_records
     }
+
+
+@app.get("/integrations/myfit-automations")
+def automations_workspace(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=user.studio_id).first()
+    deliveries = db.query(AutomationsDelivery).filter_by(analytics_studio_id=user.studio_id).order_by(
+        AutomationsDelivery.last_attempt_at.desc()).limit(20).all()
+    credential_configured = bool(integration and os.getenv(integration.credential_env_var))
+    return templates.TemplateResponse(request=request, name="automations_integration.html", context={
+        "integration": integration, "deliveries": deliveries, "credential_configured": credential_configured,
+        "user_email": user.email, "user_role": user.role, "studio_id": user.studio_id})
+
+
+@app.post("/studios/{studio_id}/integrations/myfit-automations")
+def configure_automations_integration(studio_id: int, base_url: str = Form(...), automations_studio_id: str = Form(...),
+                                      credential_env_var: str = Form("MYFIT_AUTOMATIONS_API_KEY"),
+                                      enabled: bool = Form(False), user: User = Depends(require_owner),
+                                      db: Session = Depends(get_db)):
+    integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
+    if not integration:
+        integration = AutomationsIntegration(analytics_studio_id=studio_id); db.add(integration)
+    integration.automations_base_url = base_url.strip().rstrip("/")
+    integration.automations_studio_id = automations_studio_id.strip()
+    integration.credential_env_var = credential_env_var.strip()
+    integration.integration_enabled = enabled
+    db.commit()
+    return RedirectResponse("/integrations/myfit-automations", status_code=303)
+
+
+@app.post("/studios/{studio_id}/integrations/myfit-automations/test")
+def test_automations_connection(studio_id: int, user: User = Depends(require_automations_sync),
+                                db: Session = Depends(get_db)):
+    integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
+    if not integration: raise HTTPException(400, "Integration mapping is not configured")
+    result = AutomationsClient().connection(integration)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 502)
+
+
+@app.post("/studios/{studio_id}/integrations/myfit-automations/sync/{kind}")
+def sync_automations_facts(studio_id: int, kind: Literal["retention", "reactivation", "payments", "all"],
+                           user: User = Depends(require_automations_sync), db: Session = Depends(get_db)):
+    integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
+    if not integration: raise HTTPException(400, "Integration mapping is not configured")
+    now = datetime.now(timezone.utc); facts = []; considered = skipped = 0
+    if kind in {"retention", "reactivation", "all"}:
+        members = db.query(Member).filter(Member.studio_id == studio_id).limit(100).all()
+        for member in members:
+            considered += 1
+            fact = member_fact(member, integration.automations_studio_id, now,
+                               reactivation=(kind == "reactivation" or (kind == "all" and member.status != "active")))
+            if fact: facts.append(fact)
+            else: skipped += 1
+    if kind in {"payments", "all"}:
+        payments = db.query(Payment).filter(Payment.studio_id == studio_id,
+            Payment.status.in_(["failed", "declined", "unpaid"])).limit(100).all()
+        for payment in payments:
+            considered += 1; fact = payment_fact(payment, integration.automations_studio_id, now)
+            if fact: facts.append(fact)
+            else: skipped += 1
+    deliveries = [AutomationsClient().deliver(db, integration, fact) for fact in facts]
+    accepted = sum(item.delivery_status == "accepted" for item in deliveries)
+    return {"considered": considered, "sent": len(deliveries), "skipped_insufficient_data": skipped,
+            "accepted": accepted, "rejected": len(deliveries)-accepted}
 
 
 @app.get("/login")

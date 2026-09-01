@@ -13,6 +13,7 @@ ROLE_PERMISSIONS = {
     "owner": {
         "team_manage",
         "settings_write",
+        "automations_sync",
         "email_send",
         "action_status_write",
         "member_import",
@@ -22,6 +23,7 @@ ROLE_PERMISSIONS = {
         ,"data_source_write"
     },
     "manager": {
+        "automations_sync",
         "email_send",
         "action_status_write",
         "member_import",
@@ -123,3 +125,4 @@ require_booking_import = require_studio_permission("booking_import")
 require_payment_import = require_studio_permission("payment_import")
 require_import_history = require_studio_permission("import_history")
 require_data_source_write = require_studio_permission("data_source_write")
+require_automations_sync = require_studio_permission("automations_sync")
