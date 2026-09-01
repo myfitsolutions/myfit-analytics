@@ -1952,6 +1952,7 @@ input:disabled,select:disabled,textarea:disabled,input[readonly],textarea[readon
 .dashboard-quick-nav a { flex:0 0 auto; padding:7px 12px; border:1px solid var(--border); border-radius:999px; background:var(--app-bg-soft); color:var(--text-secondary); font-size:12px; font-weight:720; text-decoration:none; white-space:nowrap; }
 .dashboard-quick-nav a:hover { border-color:var(--border-strong); background:var(--surface-elevated); color:var(--text); }.dashboard-quick-nav a:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
 .reports-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-4); }
+.reports-freshness { flex:1 0 100%; display:grid; gap:4px; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--app-bg-soft); color:var(--text-secondary); }.reports-freshness strong { color:var(--text); }.reports-freshness p { margin:0; }.reports-freshness small { color:var(--text-muted); }
 .reports-range-controls { display:flex; flex-wrap:wrap; gap:8px; }
 .reports-range-controls button { border:1px solid var(--border); border-radius:999px; background:var(--app-bg-soft); color:var(--text-secondary); padding:8px 13px; cursor:pointer; }
 .reports-range-controls button.active { border-color:var(--accent); background:var(--accent-soft); color:var(--accent); }

@@ -3860,11 +3860,17 @@ def build_report_health_summary_and_insights(studio, retention, attendance, memb
             return "neutral"
         return "positive" if value > 0 else negative
 
-    attendance_rate = attendance["attendance_rate"] if attendance else None
-    booking_growth = attendance["booking_change_percentage"] if attendance else None
-    payment_failure_rate = payments["failed"]["percentage"] if payments else None
-    revenue_growth = revenue["change_percentage"] if revenue else None
-    revenue_per_member = revenue["revenue_per_active_member"] if revenue else None
+    attendance_available = bool(attendance and attendance["has_records_in_period"])
+    payments_available = bool(payments and payments["has_records_in_period"])
+    revenue_available = bool(revenue and revenue["has_records_in_period"])
+    attendance_rate = attendance["attendance_rate"] if attendance_available else None
+    booking_growth = attendance["booking_change_percentage"] if attendance_available else None
+    payment_failure_rate = payments["failed"]["percentage"] if payments_available else None
+    revenue_growth = revenue["change_percentage"] if revenue_available else None
+    revenue_per_member = revenue["revenue_per_active_member"] if revenue_available else None
+    booking_unavailable_reason = "Booking dataset unavailable" if attendance is None else "No booking data for this period"
+    payment_unavailable_reason = "Payment dataset unavailable" if payments is None else "No payment data for this period"
+    revenue_unavailable_reason = "Revenue dataset unavailable" if revenue is None else "No revenue data for this period"
     summary = {
         "churn_risk": report_metric(
             churn_risk, threshold_status(churn_risk, 15, 30),
@@ -3874,11 +3880,12 @@ def build_report_health_summary_and_insights(studio, retention, attendance, memb
         "attendance_rate": report_metric(
             attendance_rate,
             "positive" if attendance_rate is not None and attendance_rate >= 90 else "warning" if attendance_rate is not None and attendance_rate >= 80 else "danger",
+            None if attendance_available else booking_unavailable_reason,
         ),
-        "booking_growth": report_metric(booking_growth, direction_status(booking_growth)),
-        "payment_failure_rate": report_metric(payment_failure_rate, threshold_status(payment_failure_rate, 3, 7)),
-        "revenue_growth": report_metric(revenue_growth, direction_status(revenue_growth)),
-        "revenue_per_active_member": report_metric(revenue_per_member),
+        "booking_growth": report_metric(booking_growth, direction_status(booking_growth), None if attendance_available else booking_unavailable_reason),
+        "payment_failure_rate": report_metric(payment_failure_rate, threshold_status(payment_failure_rate, 3, 7), None if payments_available else payment_unavailable_reason),
+        "revenue_growth": report_metric(revenue_growth, direction_status(revenue_growth), None if revenue_available else revenue_unavailable_reason),
+        "revenue_per_active_member": report_metric(revenue_per_member, supporting_text=None if revenue_available else revenue_unavailable_reason),
     }
 
     insights = []
@@ -3888,13 +3895,13 @@ def build_report_health_summary_and_insights(studio, retention, attendance, memb
         if critical:
             message += f" {critical} {'member is' if critical == 1 else 'members are'} currently Critical."
         insights.append({"category": "Retention", "title": "Retention needs attention", "message": message, "severity": "urgent" if critical else "warning"})
-    if payments and payments["failed"]["count"]:
+    if payments_available and payments["failed"]["count"]:
         failed = payments["failed"]["count"]
         message = f"{failed} failed {'payment was' if failed == 1 else 'payments were'} recorded in this period."
         if payments["amount_needing_attention"]:
             message += f" {studio.currency} {Decimal(payments['amount_needing_attention']):,.2f} currently requires attention."
         insights.append({"category": "Payments", "title": "Payment follow-up required", "message": message, "severity": "urgent"})
-    if attendance:
+    if attendance_available:
         rate = attendance["attendance_rate"]
         title = "Attendance is strong" if rate >= 90 else "Attendance needs attention" if rate < 80 else "Attendance is steady"
         severity = "positive" if rate >= 90 else "warning" if rate < 80 else "informational"
@@ -3904,7 +3911,7 @@ def build_report_health_summary_and_insights(studio, retention, attendance, memb
             direction = "increased" if growth > 0 else "decreased" if growth < 0 else "were unchanged"
             amount = f" {abs(growth):.1f}%" if growth else ""
             insights.append({"category": "Bookings", "title": f"Bookings {direction}", "message": f"Bookings {direction}{amount} compared with the previous period.", "severity": "positive" if growth > 0 else "warning" if growth < 0 else "informational"})
-    if revenue and revenue["change_percentage"] is not None:
+    if revenue_available and revenue["change_percentage"] is not None:
         growth = revenue["change_percentage"]
         direction = "increased" if growth > 0 else "decreased" if growth < 0 else "was unchanged"
         amount = f" {abs(growth):.1f}%" if growth else ""
@@ -3918,8 +3925,42 @@ def build_report_health_summary_and_insights(studio, retention, attendance, memb
         if declining:
             messages.append(f"{declining} active {'member has' if declining == 1 else 'members have'} declining attendance.")
         title = "Member activity needs attention" if no_attendance and declining else "Members without attendance" if no_attendance else "Attendance is declining"
-        insights.append({"category": "Member Activity", "title": title, "message": " ".join(messages), "severity": "warning"})
+        insights.append({"category": "Member Activity", "title": title, "message": " ".join(messages) + " This reflects current member attendance records.", "severity": "warning"})
     return summary, insights[:6]
+
+
+def reports_data_freshness(db, studio_id, studio, start_at, end_at, availability):
+    zone = ZoneInfo(studio.timezone)
+    definitions = {
+        "bookings": (Booking, Booking.booking_date),
+        "payments": (Payment, Payment.payment_date),
+        "revenue": (RevenueTransaction, RevenueTransaction.analytics_date),
+    }
+    datasets = {}
+    for name, (model, date_column) in definitions.items():
+        latest = db.query(func.max(date_column)).filter(model.studio_id == studio_id).scalar()
+        in_period = bool(db.query(exists().where(
+            (model.studio_id == studio_id) & (date_column >= start_at) & (date_column < end_at)
+        )).scalar())
+        if latest and latest.tzinfo is None:
+            latest = latest.replace(tzinfo=timezone.utc)
+        latest_date = latest.astimezone(zone).date() if latest else None
+        selected_end_date = end_at.astimezone(zone).date() - timedelta(days=1)
+        datasets[name] = {
+            "available": availability[name],
+            "latest_record_date": latest_date,
+            "has_records_in_period": in_period,
+            "selected_period_beyond_latest": bool(latest_date and selected_end_date > latest_date),
+        }
+    latest_dates = [item["latest_record_date"] for item in datasets.values() if item["latest_record_date"]]
+    selected_start_date = start_at.astimezone(zone).date()
+    return {
+        "selected_period_start": selected_start_date,
+        "selected_period_end": end_at.astimezone(zone).date() - timedelta(days=1),
+        "latest_data_date": max(latest_dates) if latest_dates else None,
+        "selected_period_ahead_of_all_data": bool(latest_dates and all(selected_start_date > value for value in latest_dates)),
+        "datasets": datasets,
+    }
 
 
 @app.get("/studios/{studio_id}/analytics/reports")
@@ -3932,6 +3973,7 @@ def get_reports_analytics(
     studio = get_studio(db, studio_id)
     availability = get_dataset_availability(db, studio_id)
     start_at, end_at, previous_start, previous_end = reports_date_bounds(studio, range)
+    data_freshness = reports_data_freshness(db, studio_id, studio, start_at, end_at, availability)
     members = db.query(Member).filter(Member.studio_id == studio_id).all()
     active_members = [member for member in members if member.status == "active"]
     inactive_members = [member for member in members if member.status == "inactive"]
@@ -3972,11 +4014,12 @@ def get_reports_analytics(
         total = int(booking_rows.total or 0)
         attendance = {
             "total_bookings": total,
+            "has_records_in_period": bool(total),
             **{name: {"count": count, "percentage": report_percentage(count, total)} for name, count in counts.items()},
-            "attendance_rate": report_percentage(counts["attended"], total),
+            "attendance_rate": report_percentage(counts["attended"], total) if total else None,
             "bookings_per_active_member": round(total / active_count, 2) if active_count else None,
             "previous_period_bookings": previous_total,
-            "booking_change_percentage": round((total - previous_total) * 100 / previous_total, 2) if previous_total else None,
+            "booking_change_percentage": round((total - previous_total) * 100 / previous_total, 2) if total and previous_total else None,
         }
         attendance_aggregates = get_attendance_aggregates(db, studio_id, now)
         attended_all_time = sum(item["total_attended"] for item in attendance_aggregates.values())
@@ -4000,8 +4043,9 @@ def get_reports_analytics(
         recovery = get_payment_recovery(studio_id, authorized_user, db)
         payments = {
             "total": payment_total,
-            "successful": {"count": paid, "percentage": report_percentage(paid, payment_total)},
-            "failed": {"count": failed, "percentage": report_percentage(failed, payment_total)},
+            "has_records_in_period": bool(payment_total),
+            "successful": {"count": paid, "percentage": report_percentage(paid, payment_total) if payment_total else None},
+            "failed": {"count": failed, "percentage": report_percentage(failed, payment_total) if payment_total else None},
             "members_with_issues": issue_members, "amount_needing_attention": recovery["revenue_to_recover"],
             "attention_scope": "Current unresolved payment actions; resolution does not confirm financial recovery",
         }
@@ -4022,10 +4066,11 @@ def get_reports_analytics(
             ).filter(RevenueTransaction.studio_id == studio_id, RevenueTransaction.analytics_date >= start_at, RevenueTransaction.analytics_date < end_at).group_by(column).order_by(func.sum(RevenueTransaction.net_revenue).desc()).all()]
         revenue = {
             "source": "RevenueTransaction", "net_revenue": current_net, "previous_period_net_revenue": previous_net,
-            "change_percentage": round((current_net - previous_net) * 100 / previous_net, 2) if previous_net else None,
+            "has_records_in_period": bool(current_revenue.transactions),
+            "change_percentage": round((current_net - previous_net) * 100 / previous_net, 2) if current_revenue.transactions and previous_net else None,
             "transaction_count": current_revenue.transactions, "refund_count": current_revenue.refunds or 0,
             "refund_value": current_revenue.refund_value,
-            "revenue_per_active_member": round(current_net / active_count, 2) if active_count else None,
+            "revenue_per_active_member": round(current_net / active_count, 2) if current_revenue.transactions and active_count else None,
             "gross_revenue": None, "by_type": revenue_groups(RevenueTransaction.revenue_type),
             "by_payment_method": revenue_groups(RevenueTransaction.payment_method),
         }
@@ -4035,7 +4080,7 @@ def get_reports_analytics(
     return {"studio_id": studio_id, "selected_range": range, "range": {"start": start_at, "end": end_at},
             "availability": availability, "retention": retention, "attendance": attendance,
             "member_activity": member_activity, "payments": payments, "revenue": revenue,
-            "health_summary": health_summary, "insights": insights}
+            "health_summary": health_summary, "insights": insights, "data_freshness": data_freshness}
 
 
 @app.get("/studios/{studio_id}/analytics/revenue")

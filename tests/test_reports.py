@@ -10,7 +10,7 @@ from starlette.requests import Request
 
 os.environ["APP_ENV"]="development";os.environ["DATABASE_URL"]="sqlite:///:memory:";os.environ["SESSION_COOKIE_SECURE"]="false"
 from app.database import Base
-from app.main import build_report_health_summary_and_insights, get_reports_analytics, reports_page
+from app.main import build_report_health_summary_and_insights, get_reports_analytics, reports_date_bounds, reports_page
 from app.models import Booking, Member, Payment, RevenueTransaction, Studio, User
 
 
@@ -76,27 +76,33 @@ class ReportsWorkspaceTests(unittest.TestCase):
         member=Member(studio_id=1,first_name="Old",last_name="Data",email="old@example.test",status="active");self.db.add(member);self.db.flush()
         self.db.add_all([Booking(studio_id=1,member_id=member.id,class_name="Old",status="attended",booking_date=old),Payment(studio_id=1,member_id=member.id,status="paid",amount=100,payment_date=old),RevenueTransaction(studio_id=1,identity_key="old",analytics_date=old,transaction_kind="revenue",net_revenue=Decimal("1"),gross_revenue=Decimal("0"))]);self.db.commit()
         result=get_reports_analytics(1,"this_month",self.user,self.db)
-        self.assertEqual(result["attendance"]["total_bookings"],0);self.assertEqual(result["attendance"]["attendance_rate"],0)
-        self.assertEqual(result["payments"]["total"],0);self.assertEqual(result["payments"]["successful"]["percentage"],0)
+        self.assertEqual(result["attendance"]["total_bookings"],0);self.assertIsNone(result["attendance"]["attendance_rate"])
+        self.assertEqual(result["payments"]["total"],0);self.assertIsNone(result["payments"]["successful"]["percentage"])
         self.assertEqual(result["revenue"]["net_revenue"],0);self.assertEqual(result["revenue"]["transaction_count"],0)
-        self.assertEqual(result["health_summary"]["attendance_rate"]["value"],0)
-        self.assertEqual(result["health_summary"]["payment_failure_rate"]["value"],0)
+        self.assertIsNone(result["health_summary"]["attendance_rate"]["value"])
+        self.assertIsNone(result["health_summary"]["payment_failure_rate"]["value"])
         self.assertIsNone(result["health_summary"]["booking_growth"]["value"])
         self.assertIsNone(result["health_summary"]["revenue_growth"]["value"])
+        self.assertIsNone(result["health_summary"]["revenue_per_active_member"]["value"])
+        self.assertNotIn("Attendance",{item["category"] for item in result["insights"]})
+        self.assertNotIn("Bookings",{item["category"] for item in result["insights"]})
 
     def test_missing_datasets_make_summary_unavailable_without_insights(self):
         result=get_reports_analytics(1,"this_month",self.user,self.db)
         self.assertTrue(all(not metric["available"] for metric in result["health_summary"].values()))
+        self.assertEqual(result["health_summary"]["attendance_rate"]["supporting_text"],"Booking dataset unavailable")
+        self.assertEqual(result["health_summary"]["payment_failure_rate"]["supporting_text"],"Payment dataset unavailable")
+        self.assertEqual(result["health_summary"]["revenue_growth"]["supporting_text"],"Revenue dataset unavailable")
         self.assertEqual(result["insights"],[])
 
     def test_deterministic_insight_rules(self):
         self.studio.currency="PHP"
         retention={"snapshot":"Current snapshot","total_members_considered":10,"statuses":{
             "healthy":{"count":3},"watch":{"count":4},"at_risk":{"count":2},"critical":{"count":1}}}
-        attendance={"attendance_rate":93.0,"booking_change_percentage":22.9}
+        attendance={"attendance_rate":93.0,"booking_change_percentage":22.9,"has_records_in_period":True}
         activity={"members_with_no_attendance":2,"members_with_declining_attendance":1}
-        payments={"failed":{"count":2,"percentage":4.65},"amount_needing_attention":Decimal("218")}
-        revenue={"change_percentage":4.4,"revenue_per_active_member":Decimal("116.72")}
+        payments={"failed":{"count":2,"percentage":4.65},"amount_needing_attention":Decimal("218"),"has_records_in_period":True}
+        revenue={"change_percentage":4.4,"revenue_per_active_member":Decimal("116.72"),"has_records_in_period":True}
         summary,insights=build_report_health_summary_and_insights(self.studio,retention,attendance,activity,payments,revenue)
         self.assertEqual(summary["churn_risk"]["value"],30)
         self.assertEqual(summary["churn_risk"]["status"],"danger")
@@ -122,5 +128,52 @@ class ReportsWorkspaceTests(unittest.TestCase):
         self.assertEqual([item["title"] for item in insights],["Member activity needs attention"])
         self.assertIn("3 members have no recorded attended visits",insights[0]["message"])
         self.assertIn("2 active members have declining attendance",insights[0]["message"])
+
+    def test_period_records_preserve_genuine_zero_metrics(self):
+        now=datetime.now(timezone.utc)
+        member=Member(studio_id=1,first_name="Zero",last_name="Metrics",email="zero@example.test",status="active")
+        self.db.add(member);self.db.flush()
+        self.db.add_all([
+            Booking(studio_id=1,member_id=member.id,class_name="Cancelled",status="cancelled",booking_date=now),
+            Payment(studio_id=1,member_id=member.id,status="paid",amount=100,payment_date=now),
+            RevenueTransaction(studio_id=1,identity_key="zero-net",analytics_date=now,transaction_kind="revenue",net_revenue=Decimal("0"),gross_revenue=Decimal("0")),
+        ]);self.db.commit()
+        result=get_reports_analytics(1,"this_month",self.user,self.db)
+        self.assertTrue(result["attendance"]["has_records_in_period"])
+        self.assertEqual(result["health_summary"]["attendance_rate"]["value"],0)
+        self.assertEqual(result["health_summary"]["payment_failure_rate"]["value"],0)
+        self.assertEqual(result["health_summary"]["revenue_per_active_member"]["value"],0)
+        attendance_insight=next(item for item in result["insights"] if item["category"]=="Attendance")
+        self.assertEqual(attendance_insight["title"],"Attendance needs attention")
+
+    def test_empty_current_period_does_not_claim_a_complete_hundred_percent_drop(self):
+        _,_,previous_start,previous_end=reports_date_bounds(self.studio,"this_month")
+        member=Member(studio_id=1,first_name="Previous",last_name="Only",email="previous@example.test",status="active")
+        self.db.add(member);self.db.flush()
+        self.db.add(Booking(studio_id=1,member_id=member.id,class_name="Previous",status="attended",booking_date=previous_start+timedelta(hours=1)))
+        self.db.commit()
+        result=get_reports_analytics(1,"this_month",self.user,self.db)
+        self.assertGreater(result["attendance"]["previous_period_bookings"],0)
+        self.assertIsNone(result["attendance"]["booking_change_percentage"])
+        self.assertIsNone(result["health_summary"]["booking_growth"]["value"])
+        self.assertFalse(any(item["category"]=="Bookings" for item in result["insights"]))
+
+    def test_freshness_uses_latest_tenant_scoped_record_dates(self):
+        current=datetime.now(timezone.utc)
+        older=current-timedelta(days=3)
+        other_member=Member(studio_id=2,first_name="Other",last_name="Fresh",email="fresh@other.test",status="active")
+        member=Member(studio_id=1,first_name="Fresh",last_name="One",email="fresh@one.test",status="active")
+        self.db.add_all([member,other_member]);self.db.flush()
+        self.db.add_all([
+            Booking(studio_id=1,member_id=member.id,class_name="Latest",status="attended",booking_date=older),
+            Booking(studio_id=2,member_id=other_member.id,class_name="Other",status="attended",booking_date=current+timedelta(days=30)),
+            Payment(studio_id=1,member_id=member.id,status="paid",amount=1,payment_date=older-timedelta(days=1)),
+            RevenueTransaction(studio_id=1,identity_key="fresh",analytics_date=older-timedelta(days=2),transaction_kind="revenue",net_revenue=1,gross_revenue=1),
+        ]);self.db.commit()
+        result=get_reports_analytics(1,"this_month",self.user,self.db)
+        freshness=result["data_freshness"]
+        self.assertEqual(freshness["datasets"]["bookings"]["latest_record_date"],older.date())
+        self.assertEqual(freshness["latest_data_date"],older.date())
+        self.assertNotEqual(freshness["latest_data_date"],(current+timedelta(days=30)).date())
 
 if __name__=="__main__": unittest.main()

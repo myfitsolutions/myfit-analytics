@@ -182,6 +182,12 @@ class UIModernizationTests(unittest.TestCase):
         backend=(ROOT/"app/main.py").read_text(encoding="utf-8")
         for label in ("Studio Health Summary","Management Insights"):
             self.assertIn(label,script)
+        for copy in ("Latest imported records through","The selected period has not been imported yet","Select Last Month"):
+            self.assertIn(copy,script)
+        self.assertIn('id="reports-freshness"',template)
+        self.assertIn("No booking data for this period",script)
+        self.assertIn("No payment data for this period",script)
+        self.assertIn("No revenue data for this period",script)
         self.assertIn("Current retention snapshot",backend)
         for token in ("var(--surface-elevated)","var(--text)","var(--success)","var(--warning)","var(--danger)","var(--accent)"):
             self.assertIn(token,css)
