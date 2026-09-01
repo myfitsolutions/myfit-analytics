@@ -1,12 +1,13 @@
 import os
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
+from fastapi import HTTPException
 
 os.environ["APP_ENV"]="development";os.environ["DATABASE_URL"]="sqlite:///:memory:";os.environ["SESSION_COOKIE_SECURE"]="false"
 from app.database import Base
@@ -175,5 +176,57 @@ class ReportsWorkspaceTests(unittest.TestCase):
         self.assertEqual(freshness["datasets"]["bookings"]["latest_record_date"],older.date())
         self.assertEqual(freshness["latest_data_date"],older.date())
         self.assertNotEqual(freshness["latest_data_date"],(current+timedelta(days=30)).date())
+
+    def test_custom_range_validation_and_equal_duration_comparison(self):
+        with self.assertRaises(HTTPException) as missing_start:
+            reports_date_bounds(self.studio,"custom",None,date(2026,8,20))
+        self.assertEqual(missing_start.exception.status_code,400)
+        with self.assertRaises(HTTPException) as missing_end:
+            reports_date_bounds(self.studio,"custom",date(2026,8,10),None)
+        self.assertEqual(missing_end.exception.status_code,400)
+        with self.assertRaises(HTTPException) as reversed_range:
+            reports_date_bounds(self.studio,"custom",date(2026,8,20),date(2026,8,10))
+        self.assertEqual(reversed_range.exception.status_code,400)
+        start,end,previous_start,previous_end=reports_date_bounds(self.studio,"custom",date(2026,8,10),date(2026,8,20))
+        self.assertEqual((end-start).days,11)
+        self.assertEqual((previous_end-previous_start).days,11)
+        self.assertEqual(previous_end,start)
+        one_start,one_end,one_previous_start,one_previous_end=reports_date_bounds(self.studio,"custom",date(2026,8,10),date(2026,8,10))
+        self.assertEqual(one_end-one_start,timedelta(days=1))
+        self.assertEqual(one_previous_end-one_previous_start,timedelta(days=1))
+
+    def test_custom_range_uses_studio_timezone_boundaries(self):
+        self.studio.timezone="Asia/Singapore"
+        start,end,_,_=reports_date_bounds(self.studio,"custom",date(2026,8,10),date(2026,8,10))
+        self.assertEqual(start,datetime(2026,8,9,16,tzinfo=timezone.utc))
+        self.assertEqual(end,datetime(2026,8,10,16,tzinfo=timezone.utc))
+
+    def test_custom_range_calculates_all_period_datasets_and_freshness(self):
+        member=Member(studio_id=1,first_name="Custom",last_name="Range",email="custom@example.test",status="active")
+        other=Member(studio_id=2,first_name="Other",last_name="Range",email="range@other.test",status="active")
+        self.db.add_all([member,other]);self.db.flush()
+        current=datetime(2026,8,15,12,tzinfo=timezone.utc)
+        previous=datetime(2026,8,4,12,tzinfo=timezone.utc)
+        self.db.add_all([
+            Booking(studio_id=1,member_id=member.id,class_name="Current",status="attended",booking_date=current),
+            Booking(studio_id=1,member_id=member.id,class_name="Previous",status="attended",booking_date=previous),
+            Booking(studio_id=2,member_id=other.id,class_name="Other",status="attended",booking_date=current),
+            Payment(studio_id=1,member_id=member.id,status="paid",amount=100,payment_date=current),
+            RevenueTransaction(studio_id=1,identity_key="custom-current",analytics_date=current,transaction_kind="revenue",net_revenue=Decimal("50"),gross_revenue=Decimal("50")),
+            RevenueTransaction(studio_id=1,identity_key="custom-previous",analytics_date=previous,transaction_kind="revenue",net_revenue=Decimal("40"),gross_revenue=Decimal("40")),
+            RevenueTransaction(studio_id=2,identity_key="custom-other",analytics_date=current,transaction_kind="revenue",net_revenue=Decimal("999"),gross_revenue=Decimal("999")),
+        ]);self.db.commit()
+        result=get_reports_analytics(1,"custom",self.user,self.db,start_date=date(2026,8,10),end_date=date(2026,8,20))
+        self.assertEqual(result["selected_range"],"custom")
+        self.assertEqual(result["attendance"]["total_bookings"],1)
+        self.assertEqual(result["attendance"]["booking_change_percentage"],0)
+        self.assertEqual(result["payments"]["total"],1)
+        self.assertEqual(result["payments"]["failed"]["percentage"],0)
+        self.assertEqual(result["revenue"]["net_revenue"],50)
+        self.assertEqual(result["revenue"]["change_percentage"],25)
+        self.assertEqual(result["data_freshness"]["selected_period_start"],date(2026,8,10))
+        self.assertEqual(result["data_freshness"]["selected_period_end"],date(2026,8,20))
+        self.assertEqual(result["data_freshness"]["datasets"]["bookings"]["latest_record_date"],date(2026,8,15))
+        self.assertEqual(result["retention"]["snapshot"],"Current snapshot")
 
 if __name__=="__main__": unittest.main()

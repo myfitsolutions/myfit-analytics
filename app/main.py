@@ -3807,12 +3807,18 @@ def revenue_date_bounds(studio, range_name, start_date=None, end_date=None):
     return start_at, end_at
 
 
-def reports_date_bounds(studio, range_name):
+def reports_date_bounds(studio, range_name, start_date=None, end_date=None):
     zone = ZoneInfo(studio.timezone)
     today = datetime.now(timezone.utc).astimezone(zone).date()
     month_start = today.replace(day=1)
     months = {"this_month": 1, "last_3_months": 3, "last_6_months": 6}
-    if range_name == "last_month":
+    if range_name == "custom":
+        if start_date is None or end_date is None:
+            raise HTTPException(status_code=400, detail="Custom reports require start_date and end_date")
+        if start_date > end_date:
+            raise HTTPException(status_code=400, detail="start_date must be on or before end_date")
+        start, end = start_date, end_date + timedelta(days=1)
+    elif range_name == "last_month":
         end = month_start
         start = end - relativedelta(months=1)
     else:
@@ -3966,13 +3972,15 @@ def reports_data_freshness(db, studio_id, studio, start_at, end_at, availability
 @app.get("/studios/{studio_id}/analytics/reports")
 def get_reports_analytics(
     studio_id: int,
-    range: Literal["this_month", "last_month", "last_3_months", "last_6_months"] = "this_month",
+    range: Literal["this_month", "last_month", "last_3_months", "last_6_months", "custom"] = "this_month",
     authorized_user: User = Depends(require_studio_user),
     db: Session = Depends(get_db),
+    start_date: date | None = None,
+    end_date: date | None = None,
 ):
     studio = get_studio(db, studio_id)
     availability = get_dataset_availability(db, studio_id)
-    start_at, end_at, previous_start, previous_end = reports_date_bounds(studio, range)
+    start_at, end_at, previous_start, previous_end = reports_date_bounds(studio, range, start_date, end_date)
     data_freshness = reports_data_freshness(db, studio_id, studio, start_at, end_at, availability)
     members = db.query(Member).filter(Member.studio_id == studio_id).all()
     active_members = [member for member in members if member.status == "active"]
