@@ -43,6 +43,12 @@ REQUIRED_FOREIGN_KEYS = {
     },
     "studio_data_sources": {(('studio_id',), 'studios', ('id',))},
     "ghl_integrations": {(('analytics_studio_id',), 'studios', ('id',))},
+    "ghl_contact_sync_ledger": {
+        (("analytics_studio_id",), "studios", ("id",)),
+        (("integration_id",), "ghl_integrations", ("id",)),
+        (("local_member_id",), "members", ("id",)),
+        (("source_import_id",), "import_batches", ("id",)),
+    },
 }
 
 REQUIRED_UNIQUE_OBJECTS = {
@@ -54,6 +60,7 @@ REQUIRED_UNIQUE_OBJECTS = {
     "studio_data_sources": "uq_studio_data_sources_active_primary_management",
     "revenue_transactions": "uq_revenue_transactions_source_identity",
     "ghl_integrations": "uq_ghl_integrations_studio",
+    "ghl_contact_sync_ledger": "uq_ghl_contact_sync_studio_member",
 }
 
 

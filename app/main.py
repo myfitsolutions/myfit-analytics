@@ -10,12 +10,13 @@ from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from sqlalchemy import case, exists, func, select, text
+from sqlalchemy import case, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal
+from types import SimpleNamespace
 from sqlalchemy.exc import IntegrityError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -27,6 +28,7 @@ from app.models import (
     AutomationsDelivery,
     AutomationsIntegration,
     GhlIntegration,
+    GhlContactSyncLedger,
     Booking,
     FollowUp,
     ImportBatch,
@@ -60,6 +62,8 @@ from app.services.gohighlevel import (
     EnvironmentCredentialProvider as GhlEnvironmentCredentialProvider,
     GhlClient,
     safe_error_message as ghl_safe_error_message,
+    normalize_contact_email,
+    normalize_contact_phone,
 )
 from app.auth import (
     get_current_user,
@@ -2365,6 +2369,13 @@ def protected_member_ids(db, studio_id, member_ids):
                 model.member_id.in_(member_ids)
             ).distinct().all()
         )
+    protected.update(
+        row[0] for row in db.query(GhlContactSyncLedger.local_member_id).filter(
+            GhlContactSyncLedger.analytics_studio_id == studio_id,
+            GhlContactSyncLedger.local_member_id.in_(member_ids),
+            GhlContactSyncLedger.status == "succeeded",
+        ).distinct().all()
+    )
     return protected
 
 
@@ -2396,6 +2407,7 @@ def serialize_import_batch(db, batch, users=None, data_sources=None):
         "source_name": batch.source_name_snapshot
         ,"studio_data_source_id": batch.studio_data_source_id
         ,"platform_source": data_sources.get(batch.studio_data_source_id)
+        ,"ghl_contact_sync_eligible": batch.import_type == "members" and batch.status == "completed"
     }
 
 
@@ -2482,7 +2494,6 @@ def rollback_import_batch(
             raise HTTPException(status_code=409, detail="Import is already rolled back")
 
         deleted = 0
-        protected_records = []
         if batch.import_type == "members":
             members = batch_record_query(db, batch).all()
             member_ids = [member.id for member in members]
@@ -2494,13 +2505,6 @@ def rollback_import_batch(
                     Member.import_batch_id == batch.id,
                     Member.id.in_(safe_ids)
                 ).delete(synchronize_session=False)
-            for member in members:
-                if member.id in protected_ids and len(protected_records) < 100:
-                    protected_records.append({
-                        "member_id": member.id,
-                        "name": f"{member.first_name} {member.last_name}",
-                        "reason": "Member has dependent records"
-                    })
             protected = len(protected_ids)
         else:
             deleted = batch_record_query(db, batch).delete(synchronize_session=False)
@@ -2524,7 +2528,6 @@ def rollback_import_batch(
         "deleted": deleted,
         "protected": protected,
         "status": batch.status,
-        "protected_records": protected_records
     }
 
 
@@ -2563,6 +2566,249 @@ def gohighlevel_workspace(request: Request, db: Session = Depends(get_db)):
         "safe_error_message": ghl_safe_error_message(integration.safe_error_code if integration else None),
         "csrf_token": csrf_token, "user_role": user.role, "studio_id": user.studio_id,
     })
+
+
+def _require_contact_sync_batch(db: Session, studio_id: int, batch_id: int):
+    batch = db.query(ImportBatch).filter(
+        ImportBatch.id == batch_id,
+        ImportBatch.studio_id == studio_id,
+        ImportBatch.import_type == "members",
+        ImportBatch.status == "completed",
+    ).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Eligible member import not found")
+    return batch
+
+
+def _require_connected_ghl_integration(db: Session, studio_id: int):
+    integration = db.query(GhlIntegration).filter(
+        GhlIntegration.analytics_studio_id == studio_id,
+        GhlIntegration.integration_enabled.is_(True),
+        GhlIntegration.last_connection_test_status == "connected",
+    ).first()
+    if not integration:
+        raise HTTPException(status_code=409, detail="GoHighLevel connection is not ready")
+    return integration
+
+
+def _contact_snapshot(member):
+    snapshot = {
+        "first_name": member.first_name,
+        "last_name": member.last_name,
+        "email": normalize_contact_email(member.email),
+        "phone": normalize_contact_phone(getattr(member, "phone", None)),
+    }
+    return snapshot if snapshot["email"] or snapshot["phone"] else None
+
+
+def _contact_sync_members(db: Session, studio_id: int, batch_id: int):
+    members = db.query(Member).filter(
+        Member.studio_id == studio_id,
+        Member.import_batch_id == batch_id,
+    ).order_by(Member.id).all()
+    return [(member.id, _contact_snapshot(member)) for member in members]
+
+
+def _contact_sync_counts(db: Session, studio_id: int, batch, members):
+    eligible_ids = [member_id for member_id, snapshot in members if snapshot]
+    statuses = {"pending": 0, "in_progress": 0, "succeeded": 0, "failed": 0}
+    if eligible_ids:
+        for status, count in db.query(GhlContactSyncLedger.status, func.count(GhlContactSyncLedger.id)).filter(
+            GhlContactSyncLedger.analytics_studio_id == studio_id,
+            GhlContactSyncLedger.source_import_id == batch.id,
+            GhlContactSyncLedger.local_member_id.in_(eligible_ids),
+        ).group_by(GhlContactSyncLedger.status).all():
+            statuses[status] = count
+    pending = max(0, len(eligible_ids) - statuses["in_progress"] - statuses["succeeded"] - statuses["failed"])
+    return {
+        "total_imported": batch.imported_count,
+        "eligible": len(eligible_ids),
+        "excluded": len(members) - len(eligible_ids),
+        "already_synced": statuses["succeeded"],
+        **statuses,
+        "pending": pending,
+    }
+
+
+@app.get("/studios/{studio_id}/integrations/gohighlevel/imports/{batch_id}/contacts")
+def gohighlevel_contact_sync_preview(request: Request, studio_id: int, batch_id: int,
+                                      user: User = Depends(require_ghl_connection_test),
+                                      db: Session = Depends(get_db)):
+    batch = _require_contact_sync_batch(db, studio_id, batch_id)
+    _require_connected_ghl_integration(db, studio_id)
+    members = _contact_sync_members(db, studio_id, batch_id)
+    csrf_token = request.session.get("ghl_csrf_token")
+    if not isinstance(csrf_token, str) or not csrf_token:
+        csrf_token = secrets.token_urlsafe(32)
+        request.session["ghl_csrf_token"] = csrf_token
+    return templates.TemplateResponse(request=request, name="gohighlevel_contact_sync.html", context={
+        "studio_id": studio_id,
+        "batch_id": batch.id,
+        "filename": batch.filename,
+        "counts": _contact_sync_counts(db, studio_id, batch, members),
+        "csrf_token": csrf_token,
+    })
+
+
+def _seed_contact_sync_ledger(db: Session, integration, batch, members):
+    if integration.analytics_studio_id != batch.studio_id:
+        raise HTTPException(status_code=409, detail="GoHighLevel integration does not match this studio")
+    member_ids = {member_id for member_id, snapshot in members if snapshot}
+    scoped_member_ids = {
+        row[0] for row in db.query(Member.id).filter(
+            Member.id.in_(member_ids),
+            Member.studio_id == batch.studio_id,
+            Member.import_batch_id == batch.id,
+        ).all()
+    } if member_ids else set()
+    if scoped_member_ids != member_ids:
+        raise HTTPException(status_code=409, detail="Contact sync members do not match this studio import")
+    values = [{
+        "analytics_studio_id": batch.studio_id,
+        "integration_id": integration.id,
+        "local_member_id": member_id,
+        "source_import_id": batch.id,
+        "status": "pending",
+        "attempt_count": 0,
+    } for member_id, snapshot in members if snapshot]
+    if not values:
+        db.commit()
+        return
+    dialect = db.get_bind().dialect.name
+    insert_factory = postgresql_insert if dialect == "postgresql" else sqlite_insert if dialect == "sqlite" else None
+    if insert_factory is None:
+        raise RuntimeError("GoHighLevel sync ledger requires conflict-safe SQL support")
+    statement = insert_factory(GhlContactSyncLedger).values(values)
+    db.execute(statement.on_conflict_do_nothing(index_elements=["analytics_studio_id", "local_member_id"]))
+    db.commit()
+
+
+def _claim_contact_sync(db: Session, studio_id: int, ledger_id: int, retry_only: bool, now):
+    claim_token = str(uuid.uuid4())
+    claimable = [GhlContactSyncLedger.status == "failed"] if retry_only else [
+        GhlContactSyncLedger.status.in_(["pending", "failed"])
+    ]
+    claimable.append(
+        (GhlContactSyncLedger.status == "in_progress")
+        & (GhlContactSyncLedger.claim_expires_at < now)
+    )
+    claimed = db.execute(update(GhlContactSyncLedger).where(
+        GhlContactSyncLedger.id == ledger_id,
+        GhlContactSyncLedger.analytics_studio_id == studio_id,
+        or_(*claimable),
+    ).values(
+        status="in_progress",
+        safe_error_code=None,
+        claim_token=claim_token,
+        claim_expires_at=now + timedelta(minutes=10),
+        last_attempted_at=now,
+        attempt_count=GhlContactSyncLedger.attempt_count + 1,
+    ).returning(GhlContactSyncLedger.id)).scalar_one_or_none()
+    db.commit()
+    return claim_token if claimed else None
+
+
+CONTACT_SYNC_REQUEST_LIMIT = 3
+CONTACT_SYNC_STOP_ERRORS = {
+    "integration_disabled",
+    "token_not_configured",
+    "location_not_configured",
+    "location_invalid",
+    "authentication_failed",
+    "access_forbidden",
+    "location_not_found",
+    "rate_limited",
+    "sync_interrupted",
+}
+
+
+def _run_contact_sync(db: Session, studio_id: int, batch_id: int, retry_only: bool):
+    batch = _require_contact_sync_batch(db, studio_id, batch_id)
+    integration = _require_connected_ghl_integration(db, studio_id)
+    members = _contact_sync_members(db, studio_id, batch_id)
+    snapshots = {member_id: snapshot for member_id, snapshot in members if snapshot}
+    integration_snapshot = SimpleNamespace(
+        id=integration.id,
+        analytics_studio_id=integration.analytics_studio_id,
+        token_env_var=integration.token_env_var,
+        location_env_var=integration.location_env_var,
+        integration_enabled=integration.integration_enabled,
+    )
+    _seed_contact_sync_ledger(db, integration, batch, members)
+    now = datetime.now(timezone.utc)
+    claimable = [GhlContactSyncLedger.status == "failed"] if retry_only else [
+        GhlContactSyncLedger.status.in_(["pending", "failed"])
+    ]
+    claimable.append(
+        (GhlContactSyncLedger.status == "in_progress")
+        & (GhlContactSyncLedger.claim_expires_at < now)
+    )
+    ledgers = db.query(GhlContactSyncLedger.id, GhlContactSyncLedger.local_member_id).filter(
+        GhlContactSyncLedger.analytics_studio_id == studio_id,
+        GhlContactSyncLedger.source_import_id == batch.id,
+        GhlContactSyncLedger.local_member_id.in_(snapshots),
+        or_(*claimable),
+    ).order_by(GhlContactSyncLedger.id).limit(CONTACT_SYNC_REQUEST_LIMIT).all()
+    db.commit()
+    for ledger_id, member_id in ledgers:
+        now = datetime.now(timezone.utc)
+        claim_token = _claim_contact_sync(db, studio_id, ledger_id, retry_only, now)
+        if not claim_token:
+            continue
+        try:
+            result = GhlClient().upsert_contact(integration_snapshot, snapshots[member_id])
+        except Exception:
+            result = {"ok": False, "error": "sync_interrupted"}
+        if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+            result = {"ok": False, "error": "sync_interrupted"}
+        values = {
+            "status": "succeeded" if result["ok"] else "failed",
+            "safe_error_code": result.get("error"),
+            "claim_token": None,
+            "claim_expires_at": None,
+            "updated_at": datetime.now(timezone.utc),
+        }
+        if result["ok"]:
+            values["ghl_contact_id"] = result["ghl_contact_id"]
+            values["last_synced_at"] = datetime.now(timezone.utc)
+        db.execute(update(GhlContactSyncLedger).where(
+            GhlContactSyncLedger.id == ledger_id,
+            GhlContactSyncLedger.analytics_studio_id == studio_id,
+            GhlContactSyncLedger.claim_token == claim_token,
+        ).values(**values))
+        db.commit()
+        if result.get("error") in CONTACT_SYNC_STOP_ERRORS:
+            break
+
+
+def _validate_ghl_csrf(request: Request, csrf_token: str):
+    expected = request.session.get("ghl_csrf_token")
+    if not isinstance(expected, str) or not secrets.compare_digest(csrf_token, expected):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
+
+@app.post("/studios/{studio_id}/integrations/gohighlevel/imports/{batch_id}/contacts/sync")
+def sync_import_contacts_to_gohighlevel(request: Request, studio_id: int, batch_id: int,
+                                         csrf_token: str = Form(""),
+                                         user: User = Depends(require_ghl_connection_test),
+                                         db: Session = Depends(get_db)):
+    _validate_ghl_csrf(request, csrf_token)
+    _run_contact_sync(db, studio_id, batch_id, retry_only=False)
+    return RedirectResponse(
+        f"/studios/{studio_id}/integrations/gohighlevel/imports/{batch_id}/contacts", status_code=303
+    )
+
+
+@app.post("/studios/{studio_id}/integrations/gohighlevel/imports/{batch_id}/contacts/retry")
+def retry_import_contacts_to_gohighlevel(request: Request, studio_id: int, batch_id: int,
+                                          csrf_token: str = Form(""),
+                                          user: User = Depends(require_ghl_connection_test),
+                                          db: Session = Depends(get_db)):
+    _validate_ghl_csrf(request, csrf_token)
+    _run_contact_sync(db, studio_id, batch_id, retry_only=True)
+    return RedirectResponse(
+        f"/studios/{studio_id}/integrations/gohighlevel/imports/{batch_id}/contacts", status_code=303
+    )
 
 
 def _get_or_create_ghl_integration(db: Session, studio_id: int):

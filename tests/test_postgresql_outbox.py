@@ -59,7 +59,7 @@ def test_postgresql_outbox_unique_identity_and_tenant_scope(postgres_case):
     studio_b, integration_b_id = create_mapping("identity-b")
     logical_identity = uuid.uuid4().hex
     fact_a = fact_for(studio_a, logical_identity)
-    barrier = threading.Barrier(2)
+    barrier = threading.Barrier(2, timeout=5)
 
     def enqueue_same_delivery(_):
         with Session() as db:
@@ -69,7 +69,7 @@ def test_postgresql_outbox_unique_identity_and_tenant_scope(postgres_case):
             return item.id, created
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(enqueue_same_delivery, range(2)))
+        results = list(pool.map(enqueue_same_delivery, range(2), timeout=15))
 
     with Session() as db:
         rows_a = db.scalars(select(AutomationsDelivery).where(

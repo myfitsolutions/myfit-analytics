@@ -401,6 +401,11 @@
             if (selected.rolled_back_at) content.appendChild(detailLine("Rolled back at", formatDate(selected.rolled_back_at)));
             if (selected.rolled_back_by) content.appendChild(detailLine("Rolled back by", selected.rolled_back_by));
             rollbackButton.hidden = !selected.rollback_eligible;
+            if (selected.ghl_contact_sync_eligible) {
+                const syncLink = element("a", "settings-button", "Sync to GoHighLevel");
+                syncLink.href = `/studios/${studioId}/integrations/gohighlevel/imports/${selected.id}/contacts`;
+                content.appendChild(syncLink);
+            }
         } catch (error) {
             content.replaceChildren(element("p", "crm-empty error-state", "Unable to load import details."));
         }
