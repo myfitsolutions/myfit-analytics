@@ -5,7 +5,7 @@
     const stored=localStorage.getItem(storageKey);
     document.documentElement.dataset.theme=stored==="light"||stored==="dark"?stored:preferred();
 
-    const icon=(name)=>({dashboard:"⌂",reports:"▤",revenue:"↗",members:"◉",imports:"⇧",settings:"⚙"}[name]||"•");
+    const icon=(name)=>({dashboard:"⌂",reports:"▤",revenue:"↗",members:"◉",imports:"⇧",integrations:"⇄",settings:"⚙"}[name]||"•");
     const pageTitle=()=>document.body.dataset.pageTitle||({"/dashboard":"Dashboard","/reports":"Reports","/revenue":"Revenue Intelligence","/members":"Members","/imports":"Data Imports","/onboarding":"Studio Setup"}[location.pathname]||(location.pathname.startsWith("/members/")?"Member Intelligence":"MyFit Analytics"));
     const currentNavigationHref=()=>location.pathname.startsWith("/members/")?"/members":location.pathname;
     const navItem=(label,href,key)=>{const link=document.createElement("a");link.className="app-nav-link";link.href=href;link.innerHTML=`<span aria-hidden="true">${icon(key)}</span><span>${label}</span>`;if(currentNavigationHref()===href)link.setAttribute("aria-current","page");return link;};
@@ -23,6 +23,7 @@
         const nav=document.createElement("nav");nav.className="app-sidebar-nav";
         nav.append(group("Overview",[navItem("Dashboard","/dashboard","dashboard")]),group("Analytics",[navItem("Revenue","/revenue","revenue"),navItem("Members","/members","members"),navItem("Reports","/reports","reports")]));
         if(importsAvailable)nav.append(group("Data",[navItem("Imports","/imports","imports")]));
+        if(importsAvailable)nav.append(group("Integrations",[navItem("GoHighLevel","/integrations/gohighlevel","integrations"),navItem("MyFit Automations","/integrations/myfit-automations","integrations")]));
         const settings=document.getElementById("open-settings");if(settings){const settingsNav=document.createElement("button");settingsNav.type="button";settingsNav.className="app-nav-link";settingsNav.innerHTML=`<span aria-hidden="true">${icon("settings")}</span><span>Settings</span>`;settingsNav.addEventListener("click",()=>{settings.click();closeDrawer();});nav.append(group("System",[settingsNav]));}
         const footer=document.createElement("div");footer.className="app-sidebar-footer";footer.append(themeButton());sidebar.append(brand,nav,footer);
         const mobile=document.createElement("button");mobile.type="button";mobile.className="mobile-nav-toggle";mobile.setAttribute("aria-controls","app-sidebar");mobile.setAttribute("aria-expanded","false");mobile.setAttribute("aria-label","Open navigation");mobile.innerHTML='<span aria-hidden="true">☰</span>';

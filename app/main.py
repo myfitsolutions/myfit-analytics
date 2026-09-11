@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import re
+import secrets
 import uuid
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
@@ -9,7 +10,9 @@ from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from sqlalchemy import case, exists, func, text
+from sqlalchemy import case, exists, func, select, text
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal
@@ -23,6 +26,7 @@ from app.models import (
     ActionStatus,
     AutomationsDelivery,
     AutomationsIntegration,
+    GhlIntegration,
     Booking,
     FollowUp,
     ImportBatch,
@@ -52,12 +56,18 @@ from app.platforms import PLATFORMS, get_import_profile
 from app.services.revenue import normalize_revenue_row, parse_revenue_date
 from app.services.automations import (AutomationsClient, EnvironmentCredentialProvider,
     OutboxService, member_fact, payment_fact)
+from app.services.gohighlevel import (
+    EnvironmentCredentialProvider as GhlEnvironmentCredentialProvider,
+    GhlClient,
+    safe_error_message as ghl_safe_error_message,
+)
 from app.auth import (
     get_current_user,
     normalize_email,
     hash_password,
     require_action_status_permission,
     require_automations_sync,
+    require_ghl_connection_test,
     require_booking_import,
     require_current_user,
     require_email_permission,
@@ -2531,6 +2541,64 @@ def automations_workspace(request: Request, status: str | None = Query(None), db
     return templates.TemplateResponse(request=request, name="automations_integration.html", context={
         "integration": integration, "deliveries": deliveries, "credential_configured": credential_configured,
         "user_email": user.email, "user_role": user.role, "studio_id": user.studio_id})
+
+
+@app.get("/integrations/gohighlevel")
+def gohighlevel_workspace(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    integration = db.query(GhlIntegration).filter_by(
+        analytics_studio_id=user.studio_id
+    ).first()
+    credentials = GhlEnvironmentCredentialProvider().resolve(integration) if integration else None
+    csrf_token = request.session.get("ghl_csrf_token")
+    if not isinstance(csrf_token, str) or not csrf_token:
+        csrf_token = secrets.token_urlsafe(32)
+        request.session["ghl_csrf_token"] = csrf_token
+    return templates.TemplateResponse(request=request, name="gohighlevel_integration.html", context={
+        "integration": integration,
+        "token_configured": bool(credentials and credentials.token),
+        "location_configured": bool(credentials and credentials.location_id),
+        "safe_error_message": ghl_safe_error_message(integration.safe_error_code if integration else None),
+        "csrf_token": csrf_token, "user_role": user.role, "studio_id": user.studio_id,
+    })
+
+
+def _get_or_create_ghl_integration(db: Session, studio_id: int):
+    values = {
+        "analytics_studio_id": studio_id,
+        "token_env_var": "GHL_PRIVATE_INTEGRATION_TOKEN",
+        "location_env_var": "GHL_LOCATION_ID",
+        "integration_enabled": True,
+    }
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        statement = postgresql_insert(GhlIntegration).values(**values)
+    elif dialect == "sqlite":
+        statement = sqlite_insert(GhlIntegration).values(**values)
+    else:
+        raise RuntimeError("GoHighLevel integration creation requires conflict-safe SQL support")
+    db.execute(statement.on_conflict_do_nothing(index_elements=["analytics_studio_id"]))
+    return db.scalar(select(GhlIntegration).where(GhlIntegration.analytics_studio_id == studio_id))
+
+
+@app.post("/studios/{studio_id}/integrations/gohighlevel/test")
+def test_gohighlevel_connection(request: Request, studio_id: int, csrf_token: str = Form(""),
+                                 user: User = Depends(require_ghl_connection_test),
+                                 db: Session = Depends(get_db)):
+    expected_csrf_token = request.session.get("ghl_csrf_token")
+    if not isinstance(expected_csrf_token, str) or not secrets.compare_digest(
+        csrf_token, expected_csrf_token
+    ):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+    integration = _get_or_create_ghl_integration(db, studio_id)
+    result = GhlClient().test_connection(integration)
+    integration.last_connection_test_at = datetime.now(timezone.utc)
+    integration.last_connection_test_status = "connected" if result["ok"] else "failed"
+    integration.safe_error_code = result.get("error")
+    db.commit()
+    return RedirectResponse("/integrations/gohighlevel", status_code=303)
 
 
 @app.post("/studios/{studio_id}/integrations/myfit-automations")

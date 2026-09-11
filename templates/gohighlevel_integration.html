@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>GoHighLevel Integration | MyFit Analytics</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/ui.js"></script>
+</head>
+<body data-page-title="GoHighLevel Integration">
+<main class="dashboard">
+    <header class="dashboard-header">
+        <div><h1>GoHighLevel Integration</h1><p>Read-only connection status for this studio.</p></div>
+        <nav class="dashboard-user-area" aria-label="Integration navigation">
+            <a class="settings-button" href="/dashboard">Dashboard</a>
+            {% if user_role in ['owner', 'manager'] %}<a class="settings-button" href="/imports">Imports</a>{% endif %}
+            <a class="settings-button" href="/integrations/myfit-automations">MyFit Automations</a>
+        </nav>
+    </header>
+    <section class="settings-card" aria-labelledby="ghl-connection-heading">
+        <h2 id="ghl-connection-heading">Connection</h2>
+        <dl>
+            <dt>Integration</dt><dd>{{ 'Enabled' if integration and integration.integration_enabled else 'Disabled' }}</dd>
+            <dt>Token configured</dt><dd>{{ 'Yes' if token_configured else 'No' }}</dd>
+            <dt>Location configured</dt><dd>{{ 'Yes' if location_configured else 'No' }}</dd>
+            <dt>Last test</dt><dd>{{ integration.last_connection_test_at if integration and integration.last_connection_test_at else 'Never' }}</dd>
+            <dt>Status</dt><dd>{% if integration and integration.last_connection_test_status == 'connected' %}Connected{% elif integration and integration.last_connection_test_status == 'failed' %}Failed{% else %}Not tested{% endif %}</dd>
+            <dt>Error</dt><dd>{{ safe_error_message or '—' }}</dd>
+        </dl>
+        {% if user_role in ['owner', 'manager'] %}
+        <form method="post" action="/studios/{{ studio_id }}/integrations/gohighlevel/test">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="modal-button modal-button-primary" type="submit">Test Connection</button>
+        </form>
+        {% endif %}
+    </section>
+</main>
+</body>
+</html>

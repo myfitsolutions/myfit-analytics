@@ -42,6 +42,7 @@ REQUIRED_FOREIGN_KEYS = {
         (("acknowledged_by_user_id",), "users", ("id",)),
     },
     "studio_data_sources": {(('studio_id',), 'studios', ('id',))},
+    "ghl_integrations": {(('analytics_studio_id',), 'studios', ('id',))},
 }
 
 REQUIRED_UNIQUE_OBJECTS = {
@@ -52,6 +53,7 @@ REQUIRED_UNIQUE_OBJECTS = {
     "member_milestone_status": "uq_member_milestone_identity",
     "studio_data_sources": "uq_studio_data_sources_active_primary_management",
     "revenue_transactions": "uq_revenue_transactions_source_identity",
+    "ghl_integrations": "uq_ghl_integrations_studio",
 }
 
 
