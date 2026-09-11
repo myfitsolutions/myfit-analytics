@@ -1,10 +1,7 @@
 """Real PostgreSQL outbox gate; never point TEST_POSTGRES_URL at production.
 
-Prepare a fresh disposable database before running this module:
-    python -m app.bootstrap_database
-    python -m app.migrate
+The shared pg_engine fixture creates and removes the application schema.
 """
-import os
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -13,31 +10,14 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 from sqlalchemy import delete, select, update
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 from app.models import AutomationsDelivery, AutomationsDeliveryAttempt, AutomationsIntegration, Studio
 from app.services.automations import AutomationsClient, Fact, OutboxService, transition
 
-POSTGRES_URL = os.getenv("TEST_POSTGRES_URL")
-pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL disposable PostgreSQL database not configured")
-
-
 class TestCredentials:
     def get_automations_bearer_token(self, integration):
         return "disposable-test-token"
-
-
-@pytest.fixture(scope="module")
-def pg_engine():
-    from sqlalchemy import create_engine
-    url = make_url(POSTGRES_URL)
-    assert url.get_backend_name() == "postgresql"
-    assert url.host in {"127.0.0.1", "localhost"}, "PostgreSQL gate requires a local disposable database"
-    engine = create_engine(POSTGRES_URL, pool_pre_ping=True)
-    yield engine
-    engine.dispose()
-
 
 @pytest.fixture
 def postgres_case(pg_engine):

@@ -406,6 +406,30 @@ class AutomationsIntegration(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
+class GhlIntegration(Base):
+    __tablename__ = "ghl_integrations"
+    __table_args__ = (
+        UniqueConstraint("analytics_studio_id", name="uq_ghl_integrations_studio"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    analytics_studio_id = Column(
+        Integer, ForeignKey("studios.id", ondelete="CASCADE"), nullable=False
+    )
+    token_env_var = Column(
+        String(100), nullable=False, default="GHL_PRIVATE_INTEGRATION_TOKEN"
+    )
+    location_env_var = Column(String(100), nullable=False, default="GHL_LOCATION_ID")
+    integration_enabled = Column(Boolean, nullable=False, default=True)
+    last_connection_test_at = Column(DateTime(timezone=True), nullable=True)
+    last_connection_test_status = Column(String(20), nullable=True)
+    safe_error_code = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class AutomationsDelivery(Base):
     __tablename__ = "automations_deliveries"
     __table_args__ = (

@@ -8,6 +8,7 @@ from app.migrate_studio_data_sources import run_migration as migrate_studio_data
 from app.migrate_revenue_transactions import run_migration as migrate_revenue_transactions
 from app.migrate_automations_integration import run_migration as migrate_automations_integration
 from app.migrate_automations_outbox import run_migration as migrate_automations_outbox
+from app.migrate_ghl_integration import run_migration as migrate_ghl_integration
 
 
 def run_all_migrations():
@@ -21,7 +22,8 @@ def run_all_migrations():
         ("studio data sources", migrate_studio_data_sources),
         ("revenue transactions", migrate_revenue_transactions),
         ("automations integration", migrate_automations_integration),
-        ("automations outbox", migrate_automations_outbox)
+        ("automations outbox", migrate_automations_outbox),
+        ("GoHighLevel integration", migrate_ghl_integration),
     ):
         print(f"Running {name} migration...")
         migration()
