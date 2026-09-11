@@ -28,6 +28,14 @@
         {% if counts.pending + counts.failed + counts.in_progress > 0 %}
         <p>Remaining: {{ counts.pending }} pending, {{ counts.failed }} failed, {{ counts.in_progress }} in progress. Up to 3 contacts are attempted per request; continue when ready.</p>
         {% endif %}
+        {% if counts.failure_categories %}
+        <h3>Failure summary</h3>
+        <ul>
+            {% for category in counts.failure_categories %}
+            <li>{{ category.label }}: {{ category.count }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
         {% if counts.pending + counts.failed > 0 %}
         <form method="post" action="/studios/{{ studio_id }}/integrations/gohighlevel/imports/{{ batch_id }}/contacts/sync">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

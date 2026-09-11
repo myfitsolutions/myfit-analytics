@@ -82,6 +82,11 @@ SAFE_ERROR_MESSAGES = {
     "contact_conflict": "GoHighLevel could not safely upsert this contact.",
     "contact_invalid": "GoHighLevel rejected the contact data.",
     "sync_interrupted": "The contact synchronization was interrupted and can be retried.",
+    "upstream_status_unexpected": "GoHighLevel returned an unexpected success status.",
+    "upstream_json_invalid": "GoHighLevel returned unreadable confirmation data.",
+    "upstream_contact_missing": "GoHighLevel did not return the expected contact confirmation.",
+    "upstream_contact_id_invalid": "GoHighLevel returned an invalid contact confirmation identifier.",
+    "result_persistence_failed": "The synchronization result could not be saved and can be retried.",
 }
 
 
@@ -190,16 +195,27 @@ class GhlClient:
         }
         if response.status_code in error_by_status:
             return {"ok": False, "error": error_by_status[response.status_code]}
-        if response.status_code != 200:
+        if response.status_code >= 500:
             return {"ok": False, "error": "ghl_unavailable"}
+        if response.status_code not in {200, 201}:
+            return {"ok": False, "error": "upstream_status_unexpected"}
         try:
             body = response.json()
         except ValueError:
-            return {"ok": False, "error": "invalid_response"}
-        contact_body = body.get("contact") if isinstance(body, dict) else None
+            return {"ok": False, "error": "upstream_json_invalid"}
+        if not isinstance(body, dict) or not isinstance(body.get("new"), bool):
+            return {"ok": False, "error": "upstream_contact_missing"}
+        # The published v3 contract documents HTTP 200 for both outcomes. GHL's
+        # create path is also observed returning HTTP 201; accept that narrowly
+        # only when the documented `new` discriminator confirms creation.
+        if response.status_code == 201 and body["new"] is not True:
+            return {"ok": False, "error": "upstream_status_unexpected"}
+        contact_body = body.get("contact")
+        if not isinstance(contact_body, dict):
+            return {"ok": False, "error": "upstream_contact_missing"}
         contact_id = contact_body.get("id") if isinstance(contact_body, dict) else None
         if not isinstance(contact_id, str) or not GHL_CONTACT_ID_PATTERN.fullmatch(contact_id):
-            return {"ok": False, "error": "invalid_response"}
+            return {"ok": False, "error": "upstream_contact_id_invalid"}
         return {"ok": True, "error": None, "ghl_contact_id": contact_id}
 
 
