@@ -8,6 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -20,6 +21,7 @@ from app.database import Base, get_db  # noqa: E402
 from app.main import (  # noqa: E402
     CONTACT_SYNC_REQUEST_LIMIT,
     ImportRollbackRequest,
+    _contact_sync_counts,
     _run_contact_sync,
     _seed_contact_sync_ledger,
     app,
@@ -70,6 +72,33 @@ def test_upsert_uses_fixed_contract_and_allowlisted_payload_only():
     assert "status" not in payload and "notes" not in payload
 
 
+@pytest.mark.parametrize("status,created", [(200, True), (200, False), (201, True)])
+def test_documented_update_and_create_success_shapes_are_accepted(status, created):
+    contact_id = "seD4PfOuKoVMLkEZqohJ"
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        status,
+        json={"new": created, "contact": {"id": contact_id}, "traceId": "not-retained"},
+    ))
+    assert GhlClient(transport, Credentials()).upsert_contact(
+        configured_integration(), {"email": "person@example.test"}
+    ) == {"ok": True, "error": None, "ghl_contact_id": contact_id}
+
+
+def test_only_observed_201_create_and_documented_200_are_accepted():
+    update_201 = httpx.MockTransport(lambda request: httpx.Response(
+        201, json={"new": False, "contact": {"id": "seD4PfOuKoVMLkEZqohJ"}}
+    ))
+    arbitrary_202 = httpx.MockTransport(lambda request: httpx.Response(
+        202, json={"new": True, "contact": {"id": "seD4PfOuKoVMLkEZqohJ"}}
+    ))
+    assert GhlClient(update_201, Credentials()).upsert_contact(
+        configured_integration(), {"email": "person@example.test"}
+    )["error"] == "upstream_status_unexpected"
+    assert GhlClient(arbitrary_202, Credentials()).upsert_contact(
+        configured_integration(), {"email": "person@example.test"}
+    )["error"] == "upstream_status_unexpected"
+
+
 @pytest.mark.parametrize("status,code", [
     (400, "contact_invalid"), (401, "authentication_failed"), (403, "access_forbidden"),
     (404, "location_not_found"), (409, "contact_conflict"), (422, "contact_invalid"),
@@ -88,7 +117,7 @@ def test_contact_sync_logs_redact_every_sensitive_value_and_preserve_unrelated_l
     logging.getLogger("unrelated.integration").warning("unrelated integration remains visible")
     marker = "UPSTREAM-RESPONSE-BODY-MARKER"
     transport = httpx.MockTransport(
-        lambda request: httpx.Response(200, json={"contact": {"id": "returned-contact-id"}, "marker": marker})
+        lambda request: httpx.Response(200, json={"new": True, "contact": {"id": "returned-contact-id"}, "marker": marker})
     )
     contact = {
         "first_name": "SensitiveFirst",
@@ -113,9 +142,22 @@ def test_upsert_timeout_invalid_json_and_invalid_success_are_sanitized():
     contact = {"email": "person@example.test"}
     assert GhlClient(httpx.MockTransport(timeout), Credentials()).upsert_contact(configured_integration(), contact)["error"] == "ghl_unavailable"
     invalid_json = httpx.MockTransport(lambda request: httpx.Response(200, text="private body"))
-    assert GhlClient(invalid_json, Credentials()).upsert_contact(configured_integration(), contact)["error"] == "invalid_response"
-    missing_id = httpx.MockTransport(lambda request: httpx.Response(200, json={"contact": {"email": "private@example.test"}}))
-    assert GhlClient(missing_id, Credentials()).upsert_contact(configured_integration(), contact)["error"] == "invalid_response"
+    assert GhlClient(invalid_json, Credentials()).upsert_contact(configured_integration(), contact)["error"] == "upstream_json_invalid"
+    missing_contact = httpx.MockTransport(lambda request: httpx.Response(200, json={"new": True}))
+    assert GhlClient(missing_contact, Credentials()).upsert_contact(configured_integration(), contact)["error"] == "upstream_contact_missing"
+    missing_id = httpx.MockTransport(lambda request: httpx.Response(200, json={"new": True, "contact": {"email": "private@example.test"}}))
+    assert GhlClient(missing_id, Credentials()).upsert_contact(configured_integration(), contact)["error"] == "upstream_contact_id_invalid"
+
+
+@pytest.mark.parametrize("contact_id", [123, "", "bad/id", "bad id", "x" * 101])
+def test_invalid_contact_identifiers_are_rejected_with_granular_code(contact_id):
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, json={"new": True, "contact": {"id": contact_id}}
+    ))
+    result = GhlClient(transport, Credentials()).upsert_contact(
+        configured_integration(), {"email": "person@example.test"}
+    )
+    assert result == {"ok": False, "error": "upstream_contact_id_invalid"}
 
 
 def test_payload_requires_usable_email_or_phone_and_never_copies_extra_fields():
@@ -244,18 +286,20 @@ def test_ambiguous_success_is_not_recorded_without_commit_and_retry_upserts_agai
     def fail_result_persistence(conn, cursor, statement, parameters, context, executemany):
         if fail_once["active"] and statement.startswith("UPDATE ghl_contact_sync_ledger") and "ghl_contact_id" in statement:
             fail_once["active"] = False
-            raise RuntimeError("simulated local persistence interruption")
+            raise SQLAlchemyError("simulated local persistence interruption")
     event.listen(engine, "before_cursor_execute", fail_result_persistence)
     try:
-        with pytest.raises(RuntimeError, match="simulated local persistence interruption"):
-            _run_contact_sync(db, 1, 10, False)
+        _run_contact_sync(db, 1, 10, False)
     finally:
         event.remove(engine, "before_cursor_execute", fail_result_persistence)
-    db.rollback()
     row = db.query(GhlContactSyncLedger).filter_by(local_member_id=1).one()
-    assert row.status == "in_progress" and row.ghl_contact_id is None and row.last_synced_at is None
-    row.claim_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
-    db.commit()
+    assert row.status == "failed" and row.safe_error_code == "result_persistence_failed"
+    assert row.ghl_contact_id is None and row.last_synced_at is None
+    batch = db.get(ImportBatch, 10)
+    members = [(member.id, {"email": member.email}) for member in db.query(Member).filter_by(import_batch_id=10).all() if "@" in member.email]
+    assert _contact_sync_counts(db, 1, batch, members)["failure_categories"] == [
+        {"label": "Result persistence failed", "count": 1}
+    ]
     _run_contact_sync(db, 1, 10, True)
     row = db.query(GhlContactSyncLedger).filter_by(local_member_id=1).one()
     assert calls == ["one@example.test", "one@example.test"]

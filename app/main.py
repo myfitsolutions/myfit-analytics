@@ -2620,6 +2620,32 @@ def _contact_sync_counts(db: Session, studio_id: int, batch, members):
         ).group_by(GhlContactSyncLedger.status).all():
             statuses[status] = count
     pending = max(0, len(eligible_ids) - statuses["in_progress"] - statuses["succeeded"] - statuses["failed"])
+    failure_labels = {
+        "upstream_status_unexpected": "Unexpected upstream status",
+        "upstream_json_invalid": "Unreadable upstream confirmation",
+        "upstream_contact_missing": "Missing upstream contact confirmation",
+        "upstream_contact_id_invalid": "Invalid upstream contact identifier",
+        "result_persistence_failed": "Result persistence failed",
+        "sync_interrupted": "Synchronization interrupted",
+        "authentication_failed": "Authentication failed",
+        "access_forbidden": "Permission denied",
+        "rate_limited": "Rate limited",
+    }
+    failure_categories = []
+    if eligible_ids:
+        failures = db.query(
+            GhlContactSyncLedger.safe_error_code,
+            func.count(GhlContactSyncLedger.id),
+        ).filter(
+            GhlContactSyncLedger.analytics_studio_id == studio_id,
+            GhlContactSyncLedger.source_import_id == batch.id,
+            GhlContactSyncLedger.local_member_id.in_(eligible_ids),
+            GhlContactSyncLedger.status == "failed",
+        ).group_by(GhlContactSyncLedger.safe_error_code).all()
+        failure_categories = [
+            {"label": failure_labels.get(code, "Synchronization failed"), "count": count}
+            for code, count in failures
+        ]
     return {
         "total_imported": batch.imported_count,
         "eligible": len(eligible_ids),
@@ -2627,6 +2653,7 @@ def _contact_sync_counts(db: Session, studio_id: int, batch, members):
         "already_synced": statuses["succeeded"],
         **statuses,
         "pending": pending,
+        "failure_categories": failure_categories,
     }
 
 
@@ -2719,7 +2746,38 @@ CONTACT_SYNC_STOP_ERRORS = {
     "location_not_found",
     "rate_limited",
     "sync_interrupted",
+    "result_persistence_failed",
 }
+
+
+def _persist_contact_sync_result(db: Session, studio_id: int, ledger_id: int, claim_token: str, values):
+    try:
+        db.execute(update(GhlContactSyncLedger).where(
+            GhlContactSyncLedger.id == ledger_id,
+            GhlContactSyncLedger.analytics_studio_id == studio_id,
+            GhlContactSyncLedger.claim_token == claim_token,
+        ).values(**values))
+        db.commit()
+        return True
+    except SQLAlchemyError:
+        db.rollback()
+        try:
+            db.execute(update(GhlContactSyncLedger).where(
+                GhlContactSyncLedger.id == ledger_id,
+                GhlContactSyncLedger.analytics_studio_id == studio_id,
+                GhlContactSyncLedger.claim_token == claim_token,
+            ).values(
+                status="failed",
+                safe_error_code="result_persistence_failed",
+                claim_token=None,
+                claim_expires_at=None,
+                updated_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            raise
+        return False
 
 
 def _run_contact_sync(db: Session, studio_id: int, batch_id: int, retry_only: bool):
@@ -2771,12 +2829,8 @@ def _run_contact_sync(db: Session, studio_id: int, batch_id: int, retry_only: bo
         if result["ok"]:
             values["ghl_contact_id"] = result["ghl_contact_id"]
             values["last_synced_at"] = datetime.now(timezone.utc)
-        db.execute(update(GhlContactSyncLedger).where(
-            GhlContactSyncLedger.id == ledger_id,
-            GhlContactSyncLedger.analytics_studio_id == studio_id,
-            GhlContactSyncLedger.claim_token == claim_token,
-        ).values(**values))
-        db.commit()
+        if not _persist_contact_sync_result(db, studio_id, ledger_id, claim_token, values):
+            break
         if result.get("error") in CONTACT_SYNC_STOP_ERRORS:
             break
 
