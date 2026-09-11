@@ -205,11 +205,8 @@ class GhlClient:
             return {"ok": False, "error": "upstream_json_invalid"}
         if not isinstance(body, dict) or not isinstance(body.get("new"), bool):
             return {"ok": False, "error": "upstream_contact_missing"}
-        # The published v3 contract documents HTTP 200 for both outcomes. GHL's
-        # create path is also observed returning HTTP 201; accept that narrowly
-        # only when the documented `new` discriminator confirms creation.
-        if response.status_code == 201 and body["new"] is not True:
-            return {"ok": False, "error": "upstream_status_unexpected"}
+        # GHL uses both 200 and 201 for validated upsert outcomes. The `new`
+        # discriminator identifies creation versus update for either status.
         contact_body = body.get("contact")
         if not isinstance(contact_body, dict):
             return {"ok": False, "error": "upstream_contact_missing"}

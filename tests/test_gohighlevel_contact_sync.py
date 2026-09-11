@@ -72,7 +72,9 @@ def test_upsert_uses_fixed_contract_and_allowlisted_payload_only():
     assert "status" not in payload and "notes" not in payload
 
 
-@pytest.mark.parametrize("status,created", [(200, True), (200, False), (201, True)])
+@pytest.mark.parametrize("status,created", [
+    (200, True), (200, False), (201, True), (201, False),
+])
 def test_documented_update_and_create_success_shapes_are_accepted(status, created):
     contact_id = "seD4PfOuKoVMLkEZqohJ"
     transport = httpx.MockTransport(lambda request: httpx.Response(
@@ -84,16 +86,10 @@ def test_documented_update_and_create_success_shapes_are_accepted(status, create
     ) == {"ok": True, "error": None, "ghl_contact_id": contact_id}
 
 
-def test_only_observed_201_create_and_documented_200_are_accepted():
-    update_201 = httpx.MockTransport(lambda request: httpx.Response(
-        201, json={"new": False, "contact": {"id": "seD4PfOuKoVMLkEZqohJ"}}
-    ))
+def test_only_validated_200_and_201_responses_are_accepted():
     arbitrary_202 = httpx.MockTransport(lambda request: httpx.Response(
         202, json={"new": True, "contact": {"id": "seD4PfOuKoVMLkEZqohJ"}}
     ))
-    assert GhlClient(update_201, Credentials()).upsert_contact(
-        configured_integration(), {"email": "person@example.test"}
-    )["error"] == "upstream_status_unexpected"
     assert GhlClient(arbitrary_202, Credentials()).upsert_contact(
         configured_integration(), {"email": "person@example.test"}
     )["error"] == "upstream_status_unexpected"
