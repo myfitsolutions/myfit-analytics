@@ -275,6 +275,7 @@ def test_missing_or_invalid_csrf_is_forbidden_before_ghl(http_case, form):
 def test_application_startup_does_not_call_ghl(monkeypatch):
     calls = []
     monkeypatch.setattr(GhlClient, "test_connection", lambda *args, **kwargs: calls.append(True))
+    monkeypatch.setattr(GhlClient, "upsert_contact", lambda *args, **kwargs: calls.append(True))
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
     assert calls == []

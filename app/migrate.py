@@ -9,6 +9,7 @@ from app.migrate_revenue_transactions import run_migration as migrate_revenue_tr
 from app.migrate_automations_integration import run_migration as migrate_automations_integration
 from app.migrate_automations_outbox import run_migration as migrate_automations_outbox
 from app.migrate_ghl_integration import run_migration as migrate_ghl_integration
+from app.migrate_ghl_contact_sync import run_migration as migrate_ghl_contact_sync
 
 
 def run_all_migrations():
@@ -24,6 +25,7 @@ def run_all_migrations():
         ("automations integration", migrate_automations_integration),
         ("automations outbox", migrate_automations_outbox),
         ("GoHighLevel integration", migrate_ghl_integration),
+        ("GoHighLevel contact sync", migrate_ghl_contact_sync),
     ):
         print(f"Running {name} migration...")
         migration()

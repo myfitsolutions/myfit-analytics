@@ -430,6 +430,49 @@ class GhlIntegration(Base):
     )
 
 
+class GhlContactSyncLedger(Base):
+    # Same-studio consistency across these independently keyed parent tables is
+    # enforced by the application writers. Composite database FKs would require
+    # redundant parent uniqueness constraints and indexes.
+    __tablename__ = "ghl_contact_sync_ledger"
+    __table_args__ = (
+        UniqueConstraint(
+            "analytics_studio_id", "local_member_id", name="uq_ghl_contact_sync_studio_member"
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'in_progress', 'succeeded', 'failed')",
+            name="ck_ghl_contact_sync_status",
+        ),
+        Index("ix_ghl_contact_sync_studio_import_status", "analytics_studio_id", "source_import_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    analytics_studio_id = Column(
+        Integer, ForeignKey("studios.id", ondelete="CASCADE"), nullable=False
+    )
+    integration_id = Column(
+        Integer, ForeignKey("ghl_integrations.id", ondelete="CASCADE"), nullable=False
+    )
+    local_member_id = Column(
+        Integer, ForeignKey("members.id", ondelete="CASCADE"), nullable=False
+    )
+    source_import_id = Column(
+        Integer, ForeignKey("import_batches.id", ondelete="SET NULL"), nullable=True
+    )
+    ghl_contact_id = Column(String(100), nullable=True)
+    status = Column(String(20), nullable=False, default="pending")
+    safe_error_code = Column(String(100), nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    claim_token = Column(String(36), nullable=True)
+    claim_expires_at = Column(DateTime(timezone=True), nullable=True)
+    last_attempted_at = Column(DateTime(timezone=True), nullable=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class AutomationsDelivery(Base):
     __tablename__ = "automations_deliveries"
     __table_args__ = (

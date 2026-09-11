@@ -24,13 +24,21 @@ def pg_engine():
         migrate_automations_integration,
         migrate_automations_outbox,
         migrate_ghl_integration,
+        migrate_ghl_contact_sync,
     )
 
-    engine = create_engine(postgres_url, pool_pre_ping=True)
+    engine = create_engine(
+        postgres_url,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=0,
+        connect_args={"options": "-c statement_timeout=10000 -c lock_timeout=5000"},
+    )
     migration_modules = (
         migrate_automations_integration,
         migrate_automations_outbox,
         migrate_ghl_integration,
+        migrate_ghl_contact_sync,
     )
     original_engines = [module.engine for module in migration_modules]
     try:

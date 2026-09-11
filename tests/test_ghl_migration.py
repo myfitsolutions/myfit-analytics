@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-from app import migrate, migrate_ghl_integration
+from app import migrate, migrate_ghl_contact_sync, migrate_ghl_integration
 
 
 class RecordingConnection:
@@ -45,4 +45,18 @@ def test_ghl_migration_runs_in_the_ordered_migration_registry(monkeypatch):
         if name.startswith("migrate_"):
             monkeypatch.setattr(migrate, name, lambda name=name: calls.append(name))
     migrate.run_all_migrations()
-    assert calls[-1] == "migrate_ghl_integration"
+    assert calls[-2:] == ["migrate_ghl_integration", "migrate_ghl_contact_sync"]
+
+
+def test_contact_sync_migration_is_idempotent_and_dependency_safe(monkeypatch):
+    engine = RecordingEngine()
+    monkeypatch.setattr(migrate_ghl_contact_sync, "engine", engine)
+    migrate_ghl_contact_sync.run_migration()
+    migrate_ghl_contact_sync.run_migration()
+    assert len(engine.connection.statements) == len(migrate_ghl_contact_sync.STATEMENTS) * 2
+    create = migrate_ghl_contact_sync.STATEMENTS[0]
+    assert "CREATE TABLE IF NOT EXISTS ghl_contact_sync_ledger" in create
+    assert "REFERENCES ghl_integrations(id) ON DELETE CASCADE" in create
+    assert "REFERENCES members(id) ON DELETE CASCADE" in create
+    assert "REFERENCES import_batches(id) ON DELETE SET NULL" in create
+    assert "uq_ghl_contact_sync_studio_member" in create

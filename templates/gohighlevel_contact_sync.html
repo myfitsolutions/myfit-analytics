@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Confirm Contact Sync | MyFit Analytics</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/ui.js"></script>
+</head>
+<body data-page-title="GoHighLevel Contact Sync">
+<main class="dashboard">
+    <header class="dashboard-header">
+        <div><h1>Confirm Contact Sync</h1><p>Manual, opt-in synchronization for one completed member import.</p></div>
+        <a class="settings-button" href="/imports">Back to Imports</a>
+    </header>
+    <section class="settings-card" aria-labelledby="contact-sync-heading">
+        <h2 id="contact-sync-heading">Import {{ batch_id }} · {{ filename }}</h2>
+        <p>This operation sends eligible imported contacts to the connected GoHighLevel location.</p>
+        <dl>
+            <dt>Total imported members</dt><dd>{{ counts.total_imported }}</dd>
+            <dt>Eligible</dt><dd>{{ counts.eligible }}</dd>
+            <dt>Excluded</dt><dd>{{ counts.excluded }}</dd>
+            <dt>Already synced</dt><dd>{{ counts.already_synced }}</dd>
+            <dt>Pending</dt><dd>{{ counts.pending + counts.in_progress }}</dd>
+            <dt>Succeeded</dt><dd>{{ counts.succeeded }}</dd>
+            <dt>Failed</dt><dd>{{ counts.failed }}</dd>
+        </dl>
+        {% if counts.pending + counts.failed + counts.in_progress > 0 %}
+        <p>Remaining: {{ counts.pending }} pending, {{ counts.failed }} failed, {{ counts.in_progress }} in progress. Up to 3 contacts are attempted per request; continue when ready.</p>
+        {% endif %}
+        {% if counts.pending + counts.failed > 0 %}
+        <form method="post" action="/studios/{{ studio_id }}/integrations/gohighlevel/imports/{{ batch_id }}/contacts/sync">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="modal-button modal-button-primary" type="submit">Sync to GoHighLevel</button>
+        </form>
+        {% endif %}
+        {% if counts.failed > 0 %}
+        <form method="post" action="/studios/{{ studio_id }}/integrations/gohighlevel/imports/{{ batch_id }}/contacts/retry">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="modal-button" type="submit">Retry Failed Contacts</button>
+        </form>
+        {% endif %}
+    </section>
+</main>
+</body>
+</html>
