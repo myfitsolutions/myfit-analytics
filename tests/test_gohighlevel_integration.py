@@ -45,6 +45,7 @@ def database():
 
 @pytest.fixture
 def http_case(monkeypatch):
+    monkeypatch.setenv("GHL_FEATURE_ENABLED", "true")
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},

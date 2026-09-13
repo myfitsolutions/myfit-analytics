@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.database import engine, get_db
-from app.config import settings
+from app.config import settings, ghl_feature_enabled
 from app.models import (
     ActionHistory,
     ActionStatus,
@@ -108,6 +108,13 @@ app.mount(
 templates = Jinja2Templates(
     directory="templates"
 )
+templates.env.globals["ghl_feature_enabled"] = ghl_feature_enabled
+
+
+def _is_ghl_route(path: str) -> bool:
+    return path == "/integrations/gohighlevel" or path.startswith("/integrations/gohighlevel/") or bool(
+        re.fullmatch(r"/studios/[^/]+/integrations/gohighlevel(?:/.*)?", path)
+    )
 
 
 def _sanitize_database_diagnostic(value):
@@ -156,24 +163,27 @@ async def production_safety_middleware(request: Request, call_next):
     except ValueError:
         request_id = str(uuid.uuid4())
     request.state.request_id = request_id
-    try:
-        response = await call_next(request)
-    except Exception as error:
-        if isinstance(error, ProgrammingError):
-            diagnostics = json.dumps(
-                _programming_error_diagnostics(error),
-                sort_keys=True,
+    if _is_ghl_route(request.url.path) and not ghl_feature_enabled():
+        response = JSONResponse(status_code=404, content={"detail": "Not Found"})
+    else:
+        try:
+            response = await call_next(request)
+        except Exception as error:
+            if isinstance(error, ProgrammingError):
+                diagnostics = json.dumps(
+                    _programming_error_diagnostics(error),
+                    sort_keys=True,
+                )
+                print(
+                    f"Unhandled ProgrammingError request_id={request_id} "
+                    f"diagnostics={diagnostics}"
+                )
+            else:
+                print(f"Unhandled {type(error).__name__} request_id={request_id}")
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "An unexpected error occurred", "request_id": request_id}
             )
-            print(
-                f"Unhandled ProgrammingError request_id={request_id} "
-                f"diagnostics={diagnostics}"
-            )
-        else:
-            print(f"Unhandled {type(error).__name__} request_id={request_id}")
-        response = JSONResponse(
-            status_code=500,
-            content={"detail": "An unexpected error occurred", "request_id": request_id}
-        )
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -2407,7 +2417,7 @@ def serialize_import_batch(db, batch, users=None, data_sources=None):
         "source_name": batch.source_name_snapshot
         ,"studio_data_source_id": batch.studio_data_source_id
         ,"platform_source": data_sources.get(batch.studio_data_source_id)
-        ,"ghl_contact_sync_eligible": batch.import_type == "members" and batch.status == "completed"
+        ,"ghl_contact_sync_eligible": ghl_feature_enabled() and batch.import_type == "members" and batch.status == "completed"
     }
 
 
