@@ -400,6 +400,7 @@ class AutomationsIntegration(Base):
     analytics_studio_id = Column(Integer, ForeignKey("studios.id", ondelete="CASCADE"), nullable=False, index=True)
     automations_base_url = Column(String(500), nullable=False)
     automations_studio_id = Column(String(36), nullable=False)
+    target_revision = Column(Integer, nullable=False, default=1, server_default="1")
     credential_env_var = Column(String(100), nullable=False, default="MYFIT_AUTOMATIONS_API_KEY")
     integration_enabled = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -501,6 +502,8 @@ class AutomationsDelivery(Base):
     last_attempt_at = Column(DateTime(timezone=True), nullable=True)
     delivered_at = Column(DateTime(timezone=True), nullable=True)
     next_retry_at = Column(DateTime(timezone=True), nullable=True)
+    claim_token = Column(String(36), nullable=True)
+    claim_expires_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

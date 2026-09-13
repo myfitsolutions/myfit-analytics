@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -15,6 +16,11 @@ from app.services.automations import (AutomationsClient, EnvironmentCredentialPr
     member_fact, payment_fact, transition)
 
 UTC=timezone.utc
+
+
+@pytest.fixture(autouse=True)
+def automations_test_origin(monkeypatch):
+    monkeypatch.setenv("MYFIT_AUTOMATIONS_ALLOWED_ORIGINS","https://automations.test")
 
 
 def database():

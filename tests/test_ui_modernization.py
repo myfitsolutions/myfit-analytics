@@ -19,7 +19,7 @@ class UIModernizationTests(unittest.TestCase):
 
     def test_navigation_uses_only_stable_top_level_routes(self):
         script=(ROOT/"static/ui.js").read_text(encoding="utf-8")
-        route_paths={route.path for route in app.routes}
+        route_paths={route.path for route in app.routes if hasattr(route,"path")}
         for route in ("/dashboard","/reports","/revenue","/members","/imports"):
             self.assertIn(route,route_paths);self.assertIn(route,script)
         for label,route in (("Dashboard","/dashboard"),("Revenue","/revenue"),("Members","/members"),("Reports","/reports"),("Imports","/imports")):
@@ -87,7 +87,7 @@ class UIModernizationTests(unittest.TestCase):
         imports=(ROOT/"templates/imports.html").read_text(encoding="utf-8")
         for hook in ("mapping-file","preview-import","validate-import","execute-import","import-history-list","rollback-import"):
             self.assertIn(f'id="{hook}"',imports)
-        static_routes={route.path for route in app.routes}
+        static_routes={route.path for route in app.routes if hasattr(route,"path")}
         self.assertIn("/static",static_routes)
         self.assertTrue((ROOT/"static/revenue.js").exists());self.assertTrue((ROOT/"static/member_crm.js").exists());self.assertTrue((ROOT/"static/import_history.js").exists())
 

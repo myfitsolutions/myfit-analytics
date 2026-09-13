@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy import case, exists, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -57,7 +57,8 @@ from app.services.data_sources import get_data_trust_summary, get_dataset_availa
 from app.platforms import PLATFORMS, get_import_profile
 from app.services.revenue import normalize_revenue_row, parse_revenue_date
 from app.services.automations import (AutomationsClient, EnvironmentCredentialProvider,
-    OutboxService, member_fact, payment_fact)
+    OutboxService, member_fact, payment_fact, validated_automations_origin,
+    valid_target_studio_id, MAX_ATTEMPTS, BATCH_STOP_CODES)
 from app.services.gohighlevel import (
     EnvironmentCredentialProvider as GhlEnvironmentCredentialProvider,
     GhlClient,
@@ -2547,13 +2548,26 @@ def automations_workspace(request: Request, status: str | None = Query(None), db
     if not user:
         return RedirectResponse("/login", status_code=303)
     integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=user.studio_id).first()
-    query=db.query(AutomationsDelivery).filter_by(analytics_studio_id=user.studio_id)
-    if status in {"pending","failed","delivered"}: query=query.filter(AutomationsDelivery.delivery_status==status)
-    deliveries = query.order_by(AutomationsDelivery.created_at.desc()).limit(100).all()
+    counts=dict(db.query(AutomationsDelivery.delivery_status,func.count(AutomationsDelivery.id))
+        .filter(AutomationsDelivery.analytics_studio_id==user.studio_id)
+        .group_by(AutomationsDelivery.delivery_status).all())
+    counts["retryable_failed"]=db.query(func.count(AutomationsDelivery.id)).filter(
+        AutomationsDelivery.analytics_studio_id==user.studio_id,
+        AutomationsDelivery.delivery_status=="failed",
+        AutomationsDelivery.attempt_count<MAX_ATTEMPTS).scalar()
+    counts["attempt_exhausted"]=db.query(func.count(AutomationsDelivery.id)).filter(
+        AutomationsDelivery.analytics_studio_id==user.studio_id,
+        AutomationsDelivery.delivery_status=="failed",
+        AutomationsDelivery.attempt_count>=MAX_ATTEMPTS).scalar()
+    counts["legacy_cancelled"]=counts.get("failed_legacy",0)+counts.get("cancelled",0)
     credential_configured = bool(integration and EnvironmentCredentialProvider().get_automations_bearer_token(integration))
+    csrf_token=request.session.get("automations_csrf_token")
+    if not isinstance(csrf_token,str) or not csrf_token:
+        csrf_token=secrets.token_urlsafe(32)
+        request.session["automations_csrf_token"]=csrf_token
     return templates.TemplateResponse(request=request, name="automations_integration.html", context={
-        "integration": integration, "deliveries": deliveries, "credential_configured": credential_configured,
-        "user_email": user.email, "user_role": user.role, "studio_id": user.studio_id})
+        "integration": integration, "counts": counts, "credential_configured": credential_configured,
+        "csrf_token":csrf_token,"user_role": user.role, "studio_id": user.studio_id})
 
 
 @app.get("/integrations/gohighlevel")
@@ -2911,15 +2925,44 @@ def test_gohighlevel_connection(request: Request, studio_id: int, csrf_token: st
     return RedirectResponse("/integrations/gohighlevel", status_code=303)
 
 
-@app.post("/studios/{studio_id}/integrations/myfit-automations")
-def configure_automations_integration(studio_id: int, base_url: str = Form(...), automations_studio_id: str = Form(...),
+def _validate_automations_csrf(request: Request, csrf_token: str = Form("")):
+    if not isinstance(request.session.get("user_id"), int):
+        raise HTTPException(401, "Authentication required")
+    expected=request.session.get("automations_csrf_token")
+    if not isinstance(expected,str) or not secrets.compare_digest(csrf_token,expected):
+        raise HTTPException(403,"Invalid form token")
+
+
+automations_router = APIRouter(
+    prefix="/studios/{studio_id}/integrations/myfit-automations",
+    dependencies=[Depends(_validate_automations_csrf)],
+)
+
+
+@automations_router.post("")
+def configure_automations_integration(request:Request,studio_id: int, base_url: str = Form(""), automations_studio_id: str = Form(""),
                                       credential_env_var: str = Form("MYFIT_AUTOMATIONS_API_KEY"),
-                                      enabled: bool = Form(False), user: User = Depends(require_owner),
+                                      enabled: bool = Form(False),user: User = Depends(require_owner),
                                       db: Session = Depends(get_db)):
-    integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
+    origin=validated_automations_origin(base_url)
+    if not origin or not valid_target_studio_id(automations_studio_id.strip()):
+        raise HTTPException(400,"Invalid Automations configuration")
+    if not re.fullmatch(r"MYFIT_AUTOMATIONS_[A-Z0-9_]{1,75}",credential_env_var.strip()):
+        raise HTTPException(400,"Invalid Automations configuration")
+    integration = db.query(AutomationsIntegration).filter_by(
+        analytics_studio_id=studio_id).with_for_update().first()
     if not integration:
         integration = AutomationsIntegration(analytics_studio_id=studio_id); db.add(integration)
-    integration.automations_base_url = base_url.strip().rstrip("/")
+    elif integration.automations_base_url != origin or integration.automations_studio_id != automations_studio_id.strip():
+        db.execute(update(AutomationsDelivery).where(
+            AutomationsDelivery.analytics_studio_id==studio_id,
+            AutomationsDelivery.integration_id==integration.id,
+            AutomationsDelivery.automations_studio_id==integration.automations_studio_id,
+            AutomationsDelivery.delivery_status.notin_(["delivered","cancelled"]),
+        ).values(delivery_status="cancelled",safe_error_code="target_changed",
+            claim_token=None,claim_expires_at=None,next_retry_at=None))
+        integration.target_revision += 1
+    integration.automations_base_url = origin
     integration.automations_studio_id = automations_studio_id.strip()
     integration.credential_env_var = credential_env_var.strip()
     integration.integration_enabled = enabled
@@ -2927,34 +2970,40 @@ def configure_automations_integration(studio_id: int, base_url: str = Form(...),
     return RedirectResponse("/integrations/myfit-automations", status_code=303)
 
 
-@app.post("/studios/{studio_id}/integrations/myfit-automations/test")
-def test_automations_connection(studio_id: int, user: User = Depends(require_automations_sync),
+@automations_router.post("/test")
+def test_automations_connection(request:Request,studio_id: int,user: User = Depends(require_automations_sync),
                                 db: Session = Depends(get_db)):
     integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
     if not integration: raise HTTPException(400, "Integration mapping is not configured")
+    origin=validated_automations_origin(integration.automations_base_url)
+    if not origin: raise HTTPException(400,"Automations target is not configured")
     result = AutomationsClient().connection(integration)
     return JSONResponse(result, status_code=200 if result.get("ok") else 502)
 
 
-@app.post("/studios/{studio_id}/integrations/myfit-automations/sync/{kind}")
+@automations_router.post("/sync/{kind}")
 def sync_automations_facts(studio_id: int, kind: Literal["retention", "reactivation", "payments", "all"],
-                           user: User = Depends(require_automations_sync), db: Session = Depends(get_db)):
+                           request:Request,user: User = Depends(require_automations_sync), db: Session = Depends(get_db)):
     integration = db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
     if not integration: raise HTTPException(400, "Integration mapping is not configured")
+    origin=validated_automations_origin(integration.automations_base_url)
+    if not origin: raise HTTPException(400,"Automations target is not configured")
     now = datetime.now(timezone.utc); facts = []; considered = skipped = 0
     if kind in {"retention", "reactivation", "all"}:
         members = db.query(Member).filter(Member.studio_id == studio_id).limit(100).all()
         for member in members:
             considered += 1
             fact = member_fact(member, integration.automations_studio_id, now,
-                               reactivation=(kind == "reactivation" or (kind == "all" and member.status != "active")))
+                               reactivation=(kind == "reactivation" or (kind == "all" and member.status != "active")),
+                               target_origin=origin,target_revision=integration.target_revision)
             if fact: facts.append(fact)
             else: skipped += 1
     if kind in {"payments", "all"}:
         payments = db.query(Payment).filter(Payment.studio_id == studio_id,
             Payment.status.in_(["failed", "declined", "unpaid"])).limit(100).all()
         for payment in payments:
-            considered += 1; fact = payment_fact(payment, integration.automations_studio_id, now)
+            considered += 1; fact = payment_fact(payment, integration.automations_studio_id, now,
+                target_origin=origin,target_revision=integration.target_revision)
             if fact: facts.append(fact)
             else: skipped += 1
     queued=[OutboxService().enqueue(db,integration,fact) for fact in facts]
@@ -2962,8 +3011,8 @@ def sync_automations_facts(studio_id: int, kind: Literal["retention", "reactivat
             "reused":sum(not created for _,created in queued),"skipped_insufficient_data":skipped}
 
 
-@app.post("/studios/{studio_id}/integrations/myfit-automations/deliver-pending")
-def deliver_pending_automations(studio_id:int,user:User=Depends(require_automations_sync),db:Session=Depends(get_db)):
+@automations_router.post("/deliver-pending")
+def deliver_pending_automations(request:Request,studio_id:int,user:User=Depends(require_automations_sync),db:Session=Depends(get_db)):
     integration=db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
     if not integration: raise HTTPException(400,"Integration mapping is not configured")
     items=OutboxService().deliver_pending(db,integration)
@@ -2971,14 +3020,38 @@ def deliver_pending_automations(studio_id:int,user:User=Depends(require_automati
             "failed":sum(i.delivery_status=="failed" for i in items)}
 
 
-@app.post("/studios/{studio_id}/integrations/myfit-automations/outbox/{delivery_id}/retry")
-def retry_automations_delivery(studio_id:int,delivery_id:int,user:User=Depends(require_automations_sync),db:Session=Depends(get_db)):
+@automations_router.post("/outbox/{delivery_id}/retry")
+def retry_automations_delivery(request:Request,studio_id:int,delivery_id:int,user:User=Depends(require_automations_sync),db:Session=Depends(get_db)):
     integration=db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
     item=db.query(AutomationsDelivery).filter_by(id=delivery_id,analytics_studio_id=studio_id).first()
-    if not integration or not item: raise HTTPException(404,"Delivery not found")
+    if not integration or not item or item.integration_id!=integration.id or item.automations_studio_id!=integration.automations_studio_id: raise HTTPException(404,"Delivery not found")
+    if item.attempt_count>=MAX_ATTEMPTS: raise HTTPException(409,"Delivery retry limit reached")
     OutboxService().retry(db,item)
     result=OutboxService().deliver(db,integration,item)
-    return {"id":result.id,"status":result.delivery_status,"attempt_count":result.attempt_count}
+    return {"status":result.delivery_status if result else "retryable","attempt_count":result.attempt_count if result else item.attempt_count}
+
+
+@automations_router.post("/retry-failures")
+def retry_failed_automations(request:Request,studio_id:int,
+                             user:User=Depends(require_automations_sync),db:Session=Depends(get_db)):
+    integration=db.query(AutomationsIntegration).filter_by(analytics_studio_id=studio_id).first()
+    if not integration: raise HTTPException(404,"Integration mapping not found")
+    items=db.query(AutomationsDelivery).filter_by(analytics_studio_id=studio_id,
+        integration_id=integration.id,delivery_status="failed",
+        automations_studio_id=integration.automations_studio_id).filter(
+        AutomationsDelivery.attempt_count<MAX_ATTEMPTS).order_by(
+        AutomationsDelivery.created_at,AutomationsDelivery.id).limit(3).all()
+    attempted=delivered=failed=0
+    for item in items:
+        OutboxService().retry(db,item)
+        result=OutboxService().deliver(db,integration,item)
+        if result is None: break
+        attempted+=1; delivered+=result.delivery_status=="delivered"; failed+=result.delivery_status=="failed"
+        if result.safe_error_code in BATCH_STOP_CODES: break
+    return {"attempted":attempted,"delivered":delivered,"failed":failed}
+
+
+app.include_router(automations_router)
 
 
 @app.get("/login")
