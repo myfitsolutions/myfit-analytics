@@ -15,6 +15,13 @@ def parse_bool(name, default):
     return value == "true"
 
 
+def ghl_feature_enabled():
+    """Opt-in only; missing or unrecognized values park GoHighLevel."""
+    return os.getenv("GHL_FEATURE_ENABLED", "").strip().casefold() in {
+        "true", "1", "yes", "on"
+    }
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str

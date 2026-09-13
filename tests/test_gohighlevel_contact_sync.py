@@ -366,6 +366,7 @@ def test_stale_claim_is_recovered_but_fresh_claim_is_not(monkeypatch):
 
 @pytest.fixture
 def http_case(monkeypatch):
+    monkeypatch.setenv("GHL_FEATURE_ENABLED", "true")
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine); Session = sessionmaker(bind=engine, expire_on_commit=False); password = "valid-test-password"
     with Session.begin() as db:
